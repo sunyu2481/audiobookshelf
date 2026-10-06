@@ -1,3 +1,5 @@
+const remoteAudio = require('../utils/remoteAudio')
+const { isStrmFile, hasStrmFiles } = require('../utils/audioSource')
 const { Request, Response, NextFunction } = require('express')
 const Path = require('path')
 const fs = require('../libs/fsExtra')
@@ -171,6 +173,7 @@ class LibraryItemController {
       Logger.warn(`User "${req.user.username}" attempted to download without permission`)
       return res.sendStatus(403)
     }
+    if (hasStrmFiles(req.libraryItem)) return res.status(409).send('STRM 书籍暂不支持整本下载')
     const libraryItemPath = req.libraryItem.path
     const itemTitle = req.libraryItem.media.title
 
@@ -989,6 +992,11 @@ class LibraryItemController {
   async getLibraryFile(req, res) {
     const libraryFile = req.libraryFile
 
+    if (isStrmFile(libraryFile)) {
+      const audioFile = req.libraryItem.getAudioFileWithIno(libraryFile.ino) || libraryFile
+      return remoteAudio.serve(req, res, audioFile)
+    }
+
     if (global.XAccel) {
       const encodedURI = encodeUriPath(global.XAccel + libraryFile.metadata.path)
       Logger.debug(`Use X-Accel to serve static file ${encodedURI}`)
@@ -1078,6 +1086,8 @@ class LibraryItemController {
       Logger.error(`[LibraryItemController] User "${req.user.username}" without download permission attempted to download file "${libraryFile.metadata.path}"`)
       return res.sendStatus(403)
     }
+
+    if (isStrmFile(libraryFile)) return res.status(409).send('STRM 音轨暂不支持离线下载')
 
     Logger.info(`[LibraryItemController] User "${req.user.username}" requested download for item "${req.libraryItem.media.title}" file at "${libraryFile.metadata.path}"`)
 

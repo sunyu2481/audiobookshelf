@@ -15,6 +15,7 @@ const { PlayMethod } = require('../utils/constants')
 const PlaybackSession = require('../objects/PlaybackSession')
 const DeviceInfo = require('../objects/DeviceInfo')
 const Stream = require('../objects/Stream')
+const { isStrmFile } = require('../utils/audioSource')
 
 class PlaybackSessionManager {
   constructor() {
@@ -81,8 +82,13 @@ class PlaybackSessionManager {
     const deviceInfo = await this.getDeviceInfo(req, req.body?.deviceInfo)
     Logger.debug(`[PlaybackSessionManager] startSessionRequest for device ${deviceInfo.deviceDescription}`)
     const { libraryItem, body: options } = req
-    const session = await this.startSession(req.user, deviceInfo, libraryItem, episodeId, options)
-    res.json(session.toJSONForClient(libraryItem))
+    try {
+      const session = await this.startSession(req.user, deviceInfo, libraryItem, episodeId, options)
+      res.json(session.toJSONForClient(libraryItem))
+    } catch (error) {
+      Logger.error('[PlaybackSessionManager] 无法创建播放会话', error.message)
+      res.status(error.status || 500).send(error.status ? error.message : '无法创建播放会话')
+    }
   }
 
   /**
@@ -311,6 +317,16 @@ class PlaybackSessionManager {
    * @returns {Promise<PlaybackSession>}
    */
   async startSession(user, deviceInfo, libraryItem, episodeId, options) {
+    const tracks = libraryItem.getTrackList(episodeId)
+    const hasRemoteAudio = tracks.some(isStrmFile)
+    if (hasRemoteAudio) {
+      if (tracks.some((track) => isStrmFile(track) && (track.error || !Number.isFinite(track.duration) || track.duration <= 0))) {
+        throw Object.assign(new Error('远程音频尚未完成探测，请检查来源后重新扫描书籍'), { status: 422 })
+      }
+      if (options.forceTranscode || (!options.forceDirectPlay && !libraryItem.media.checkCanDirectPlay(options.supportedMimeTypes, episodeId))) {
+        throw Object.assign(new Error('当前播放器不支持此音频格式，STRM 音频暂不支持转码'), { status: 415 })
+      }
+    }
     // Close any sessions already open for user and device
     const userSessions = this.sessions.filter((playbackSession) => playbackSession.userId === user.id && playbackSession.deviceId === deviceInfo.id)
     for (const session of userSessions) {

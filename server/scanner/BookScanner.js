@@ -16,6 +16,7 @@ const BookFinder = require('../finders/BookFinder')
 const fsExtra = require('../libs/fsExtra')
 const EBookFile = require('../objects/files/EBookFile')
 const AudioFile = require('../objects/files/AudioFile')
+const { isStrmFile } = require('../utils/audioSource')
 const LibraryFile = require('../objects/files/LibraryFile')
 
 const RssFeedManager = require('../managers/RssFeedManager')
@@ -82,6 +83,14 @@ class BookScanner {
       ]
     })
 
+    for (const audioFile of media.audioFiles) {
+      if (!isStrmFile(audioFile) || (!audioFile.error && !libraryItemData.forceRemoteProbe)) continue
+      const libraryFile = libraryItemData.audioLibraryFiles.find((lf) => lf.metadata.path === audioFile.metadata.path || lf.ino === audioFile.ino)
+      if (libraryFile && !libraryItemData.audioLibraryFilesModified.some((lf) => lf.new.metadata.path === libraryFile.metadata.path)) {
+        libraryItemData.libraryFilesModified.push({ old: libraryFile, new: libraryFile })
+      }
+    }
+
     let hasMediaChanges = libraryItemData.hasAudioFileChanges || libraryItemData.audioLibraryFiles.length !== media.audioFiles.length
     if (hasMediaChanges) {
       // Filter out audio files that were removed
@@ -102,6 +111,9 @@ class BookScanner {
 
           if (matchedScannedAudioFile) {
             scannedAudioFiles = scannedAudioFiles.filter((saf) => saf !== matchedScannedAudioFile)
+            if (matchedScannedAudioFile.remote && matchedScannedAudioFile.error && audioFileObj.duration > 0) {
+              return { ...audioFileObj, ino: matchedScannedAudioFile.ino, metadata: matchedScannedAudioFile.metadata.toJSON(), error: matchedScannedAudioFile.error }
+            }
             const audioFile = new AudioFile(audioFileObj)
             audioFile.updateFromScan(matchedScannedAudioFile)
             return audioFile.toJSON()

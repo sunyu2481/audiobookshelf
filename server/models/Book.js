@@ -65,6 +65,7 @@ const SocketAuthority = require('../SocketAuthority')
  * @property {ChapterObject[]} chapters
  * @property {Object} metaTags
  * @property {string} mimeType
+ * @property {{mimeType: string|null, size: number|null}} [remote] 远程音频属性，不包含来源地址或凭据
  *
  * @typedef AudioTrackProperties
  * @property {string} title

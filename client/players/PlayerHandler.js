@@ -14,6 +14,7 @@ export default class PlayerHandler {
     this.player = null
     this.playerState = 'IDLE'
     this.isHlsTranscode = false
+    this.hasRemoteAudio = false
     this.currentSessionId = null
     this.startTimeOverride = undefined // Used for starting playback at a specific time (i.e. clicking bookmark from library item page)
     this.startTime = 0
@@ -119,6 +120,13 @@ export default class PlayerHandler {
   }
 
   playerError() {
+    if (this.hasRemoteAudio) {
+      this.stopPlayInterval()
+      this.ctx.playerLoading = false
+      this.ctx.setPlaying(false)
+      this.ctx.$toast.error('远程音频播放失败，请检查 OpenList 地址、网络或音频格式')
+      return
+    }
     // Switch to HLS stream on error
     if (!this.isCasting && this.player instanceof LocalAudioPlayer) {
       console.log(`[PlayerHandler] Audio player error switching to HLS stream`)
@@ -196,8 +204,12 @@ export default class PlayerHandler {
     const path = this.episodeId ? `/api/items/${this.libraryItem.id}/play/${this.episodeId}` : `/api/items/${this.libraryItem.id}/play`
     const session = await this.ctx.$axios.$post(path, payload).catch((error) => {
       console.error('Failed to start stream', error)
+      this.ctx.playerLoading = false
+      this.ctx.setPlaying(false)
+      const message = error.response?.data
+      this.ctx.$toast.error(typeof message === 'string' ? message : '无法开始播放')
     })
-    this.prepareSession(session)
+    if (session) this.prepareSession(session)
   }
 
   prepareOpenSession(session, playbackRate) {
@@ -215,6 +227,7 @@ export default class PlayerHandler {
   }
 
   prepareSession(session) {
+    this.hasRemoteAudio = session.audioTracks.some((track) => track.metadata?.ext?.toLowerCase() === '.strm')
     this.failedProgressSyncs = 0
     this.startTime = this.startTimeOverride !== undefined ? this.startTimeOverride : session.currentTime
     this.setSessionId(session.id)
@@ -244,6 +257,7 @@ export default class PlayerHandler {
   }
 
   resetPlayer() {
+    this.hasRemoteAudio = false
     if (this.player) {
       this.player.destroy()
     }

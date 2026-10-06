@@ -201,6 +201,7 @@ class LibraryScanner {
       } else {
         libraryItemDataFound = libraryItemDataFound.filter((lidf) => lidf !== libraryItemData)
         let libraryItemDataUpdated = await libraryItemData.checkLibraryItemData(existingLibraryItem, libraryScan)
+        libraryItemData.forceRemoteProbe = forceRescan
         if (libraryItemDataUpdated || forceRescan) {
           if (forceRescan || libraryItemData.hasLibraryFileChanges || libraryItemData.hasPathChange) {
             const { libraryItem, wasUpdated } = await LibraryItemScanner.rescanLibraryItemMedia(existingLibraryItem, libraryItemData, libraryScan.library.settings, libraryScan)

@@ -34,6 +34,7 @@ class AudioFile {
     this.manuallyVerified = false
     this.exclude = false
     this.error = null
+    this.remote = null
 
     if (data) {
       this.construct(data)
@@ -65,7 +66,8 @@ class AudioFile {
       chapters: this.chapters,
       embeddedCoverArt: this.embeddedCoverArt,
       metaTags: this.metaTags?.toJSON() || {},
-      mimeType: this.mimeType
+      mimeType: this.mimeType,
+      ...(this.remote ? { remote: { ...this.remote } } : {})
     }
   }
 
@@ -78,6 +80,7 @@ class AudioFile {
     this.manuallyVerified = !!data.manuallyVerified
     this.exclude = !!data.exclude
     this.error = data.error || null
+    this.remote = data.remote ? { ...data.remote } : null
 
     this.trackNumFromMeta = data.trackNumFromMeta
     this.discNumFromMeta = data.discNumFromMeta
@@ -101,6 +104,7 @@ class AudioFile {
   }
 
   get mimeType() {
+    if (this.remote) return this.remote.mimeType
     const format = this.metadata.format.toUpperCase()
     if (AudioMimeType[format]) {
       return AudioMimeType[format]
@@ -133,6 +137,7 @@ class AudioFile {
     this.chapters = probeData.chapters || []
     this.metaTags = probeData.audioMetaTags
     this.embeddedCoverArt = probeData.embeddedCoverArt
+    this.remote = probeData.remote ? { ...probeData.remote } : null
   }
 
   syncChapters(updatedChapters) {
@@ -172,7 +177,8 @@ class AudioFile {
     let hasUpdated = false
 
     const newjson = scannedAudioFile.toJSON()
-    const ignoreKeys = ['manuallyVerified', 'ctimeMs', 'addedAt', 'updatedAt']
+    newjson.remote = newjson.remote || null
+    const ignoreKeys = ['manuallyVerified', 'ctimeMs', 'addedAt', 'updatedAt', 'mimeType']
 
     for (const key in newjson) {
       if (key === 'metadata') {
@@ -182,6 +188,11 @@ class AudioFile {
       } else if (key === 'metaTags') {
         if (!this.metaTags || !this.metaTags.isEqual(scannedAudioFile.metaTags)) {
           this.metaTags = scannedAudioFile.metaTags.clone()
+          hasUpdated = true
+        }
+      } else if (key === 'remote') {
+        if (JSON.stringify(this.remote) !== JSON.stringify(newjson.remote)) {
+          this.remote = newjson.remote ? { ...newjson.remote } : null
           hasUpdated = true
         }
       } else if (key === 'chapters') {

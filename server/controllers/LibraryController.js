@@ -1,3 +1,4 @@
+const { hasStrmFiles } = require('../utils/audioSource')
 const { Request, Response, NextFunction } = require('express')
 const Sequelize = require('sequelize')
 const Path = require('path')
@@ -1448,6 +1449,8 @@ class LibraryController {
     }
 
     Logger.info(`[LibraryController] User "${req.user.username}" requested download for items "${itemIds}"`)
+
+    if (libraryItems.some(hasStrmFiles)) return res.status(409).send('包含 STRM 书籍，暂不支持批量下载')
 
     const filename = `LibraryItems-${Date.now()}.zip`
     const pathObjects = libraryItems.map((li) => ({ path: li.path, isFile: li.isFile }))

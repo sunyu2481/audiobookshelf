@@ -1,3 +1,4 @@
+const { hasStrmFiles } = require('../utils/audioSource')
 const { Request, Response, NextFunction } = require('express')
 const Logger = require('../Logger')
 const Database = require('../Database')
@@ -27,6 +28,8 @@ class ToolsController {
    * @param {Response} res
    */
   async encodeM4b(req, res) {
+    if (hasStrmFiles(req.libraryItem)) return res.status(409).send('STRM 音频暂不支持合并或写入元数据')
+
     if (req.libraryItem.isMissing || req.libraryItem.isInvalid) {
       Logger.error(`[MiscController] encodeM4b: library item not found or invalid ${req.params.id}`)
       return res.status(404).send('Audiobook not found')
@@ -82,6 +85,8 @@ class ToolsController {
    * @param {Response} res
    */
   async embedAudioFileMetadata(req, res) {
+    if (hasStrmFiles(req.libraryItem)) return res.status(409).send('STRM 音频暂不支持合并或写入元数据')
+
     if (req.libraryItem.isMissing || !req.libraryItem.hasAudioTracks || !req.libraryItem.isBook) {
       Logger.error(`[ToolsController] Invalid library item`)
       return res.sendStatus(400)
@@ -138,6 +143,8 @@ class ToolsController {
         Logger.error(`[ToolsController] Batch embed library item (${libraryItemId}) is already in queue or processing`)
         return res.status(400).send('Library item is already in queue or processing')
       }
+
+      if (hasStrmFiles(libraryItem)) return res.status(409).send('STRM 音频暂不支持写入元数据')
 
       libraryItems.push(libraryItem)
     }

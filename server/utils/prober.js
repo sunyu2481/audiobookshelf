@@ -244,6 +244,7 @@ function parseProbeData(data, verbose = false) {
 
     let cleanedData = {
       format: format.format_long_name || format.name || 'Unknown',
+      formatName: format.format_name,
       duration: !isNaN(format.duration) ? Number(format.duration) : null,
       size: sizeBytes,
       sizeMb,
@@ -290,12 +291,12 @@ function parseProbeData(data, verbose = false) {
  * @param {boolean} [verbose=false]
  * @returns {import('../scanner/MediaProbeData')|{error:string}}
  */
-function probe(filepath, verbose = false) {
+function probe(filepath, verbose = false, options = {}) {
   if (process.env.FFPROBE_PATH) {
     ffprobe.FFPROBE_PATH = process.env.FFPROBE_PATH
   }
 
-  return ffprobe(filepath)
+  return ffprobe(filepath, options)
     .then((raw) => {
       if (raw.error) {
         return {
@@ -328,12 +329,12 @@ module.exports.probe = probe
  * @param {string} filepath
  * @returns {Object} ffprobe json output
  */
-function rawProbe(filepath) {
+function rawProbe(filepath, options = {}) {
   if (process.env.FFPROBE_PATH) {
     ffprobe.FFPROBE_PATH = process.env.FFPROBE_PATH
   }
 
-  return ffprobe(filepath).catch((err) => {
+  return ffprobe(filepath, options).catch((err) => {
     return {
       error: err
     }

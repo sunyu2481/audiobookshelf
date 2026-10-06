@@ -7,6 +7,9 @@ const parseNameString = require('../utils/parsers/parseNameString')
 const parseSeriesString = require('../utils/parsers/parseSeriesString')
 const LibraryItem = require('../models/LibraryItem')
 const AudioFile = require('../objects/files/AudioFile')
+const AudioMetaTags = require('../objects/metadata/AudioMetaTags')
+const remoteAudio = require('../utils/remoteAudio')
+const { isStrmFile } = require('../utils/audioSource')
 
 class AudioFileScanner {
   constructor() {}
@@ -154,14 +157,18 @@ class AudioFileScanner {
    * @returns {Promise<AudioFile>}
    */
   async scan(mediaType, libraryFile, mediaMetadataFromScan) {
-    const probeData = await prober.probe(libraryFile.metadata.path)
+    const remote = isStrmFile(libraryFile)
+    let probeData = remote ? await remoteAudio.probe(libraryFile.metadata.path) : await prober.probe(libraryFile.metadata.path)
+    const remoteError = remote && probeData.error
 
     if (probeData.error) {
       Logger.error(`[AudioFileScanner] ${probeData.error} : "${libraryFile.metadata.path}"`)
-      return null
+      if (!remote) return null
+      // 保留待重试音轨，使网络故障不会导致书籍或章节被静默丢弃。
+      probeData = { duration: 0, audioMetaTags: new AudioMetaTags(), remote: { mimeType: null, size: null } }
     }
 
-    if (!probeData.audioStream) {
+    if (!probeData.audioStream && !remoteError) {
       Logger.error('[AudioFileScanner] Invalid audio file no audio stream')
       return null
     }
@@ -175,6 +182,7 @@ class AudioFileScanner {
       audioFile.discNumFromFilename = discNumber
     }
     audioFile.setDataFromProbe(libraryFile, probeData)
+    if (remoteError) audioFile.error = remoteError
 
     return audioFile
   }
@@ -206,6 +214,7 @@ class AudioFileScanner {
    * @returns {object}
    */
   probeAudioFile(audioFilePath) {
+    if (isStrmFile(audioFilePath)) return remoteAudio.probe(audioFilePath, true)
     Logger.debug(`[AudioFileScanner] Running ffprobe for audio file at "${audioFilePath}"`)
     return prober.rawProbe(audioFilePath)
   }

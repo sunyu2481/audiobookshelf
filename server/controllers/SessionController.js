@@ -1,3 +1,5 @@
+const remoteAudio = require('../utils/remoteAudio')
+const { isStrmFile } = require('../utils/audioSource')
 const Path = require('path')
 const { Request, Response, NextFunction } = require('express')
 const Logger = require('../Logger')
@@ -314,6 +316,10 @@ class SessionController {
 
     const user = await Database.userModel.getUserById(playbackSession.userId)
     Logger.debug(`[SessionController] Serving audio track ${audioTrack.index} for session "${req.params.id}" belonging to user "${user.username}"`)
+
+    if (isStrmFile(audioTrack)) {
+      return remoteAudio.serve(req, res, audioTrack)
+    }
 
     if (global.XAccel) {
       const encodedURI = encodeUriPath(global.XAccel + audioTrack.metadata.path)

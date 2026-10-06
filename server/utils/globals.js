@@ -6,4 +6,6 @@ const globals = {
   MetadataFileTypes: ['opf', 'abs', 'xml', 'json']
 }
 
+globals.SupportedAudioFileTypes = [...globals.SupportedAudioTypes, 'strm']
+
 module.exports = globals

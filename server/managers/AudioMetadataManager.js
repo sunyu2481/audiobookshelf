@@ -1,3 +1,4 @@
+const { hasStrmFiles } = require('../utils/audioSource')
 const Path = require('path')
 const SocketAuthority = require('../SocketAuthority')
 const Logger = require('../Logger')
@@ -62,6 +63,8 @@ class AudioMetadataMangaer {
    * @param {UpdateMetadataOptions} [options={}]
    */
   async updateMetadataForItem(userId, libraryItem, options = {}) {
+    if (hasStrmFiles(libraryItem)) return false
+
     const forceEmbedChapters = !!options.forceEmbedChapters
     const backupFiles = !!options.backup
 

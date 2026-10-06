@@ -4,6 +4,7 @@ class MediaProbeData {
   constructor(probeData) {
     this.embeddedCoverArt = null
     this.format = null
+    this.formatName = null
     this.duration = null
     this.size = null
 
@@ -45,6 +46,7 @@ class MediaProbeData {
   setData(data) {
     this.embeddedCoverArt = data.video_stream?.codec || null
     this.format = data.format
+    this.formatName = data.formatName
     this.duration = data.duration
     this.size = data.size
 

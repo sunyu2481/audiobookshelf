@@ -1,3 +1,4 @@
+const { isStrmFile } = require('../utils/audioSource')
 const { Request, Response } = require('express')
 const Path = require('path')
 
@@ -217,6 +218,10 @@ class RssFeedManager {
       res.sendStatus(404)
       return
     }
+    if (isStrmFile(episodePath)) {
+      return res.status(409).send('STRM 音轨暂不支持订阅输出，请在书库中播放')
+    }
+
     // Express does not set the correct mimetype for m4b files so use our defined mimetypes if available
     const audioMimeType = getAudioMimeTypeFromExtname(Path.extname(episodePath))
     if (audioMimeType) {

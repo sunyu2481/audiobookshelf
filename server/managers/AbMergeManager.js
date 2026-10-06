@@ -1,3 +1,4 @@
+const { hasStrmFiles } = require('../utils/audioSource')
 const Path = require('path')
 const fs = require('../libs/fsExtra')
 const Logger = require('../Logger')
@@ -55,6 +56,8 @@ class AbMergeManager {
    * @param {AbMergeEncodeOptions} [options={}]
    */
   async startAudiobookMerge(userId, libraryItem, options = {}) {
+    if (hasStrmFiles(libraryItem)) return false
+
     const task = new Task()
 
     const audiobookBaseName = libraryItem.isFile ? Path.basename(libraryItem.path, Path.extname(libraryItem.path)) : Path.basename(libraryItem.path)

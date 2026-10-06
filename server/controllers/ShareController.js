@@ -1,3 +1,5 @@
+const remoteAudio = require('../utils/remoteAudio')
+const { isStrmFile, hasStrmFiles } = require('../utils/audioSource')
 const { Request, Response } = require('express')
 const uuid = require('uuid')
 const Path = require('path')
@@ -77,6 +79,10 @@ class ShareController {
       const libraryItem = await Database.mediaItemShareModel.getMediaItemsLibraryItem(mediaItemShare.mediaItemId, mediaItemShare.mediaItemType)
       if (!libraryItem) {
         return res.status(404).send('Media item not found')
+      }
+
+      if (libraryItem.media.includedAudioFiles.some((file) => isStrmFile(file) && (file.error || !(file.duration > 0)))) {
+        return res.status(422).send('远程音频尚未完成探测，请重新扫描书籍')
       }
 
       let startOffset = 0
@@ -200,6 +206,10 @@ class ShareController {
     }
     const audioTrackPath = audioTrack.metadata.path
 
+    if (isStrmFile(audioTrack)) {
+      return remoteAudio.serve(req, res, audioTrack)
+    }
+
     if (global.XAccel) {
       const encodedURI = encodeUriPath(global.XAccel + audioTrackPath)
       Logger.debug(`Use X-Accel to serve static file ${encodedURI}`)
@@ -243,11 +253,13 @@ class ShareController {
     }
 
     const libraryItem = await Database.libraryItemModel.findByPk(playbackSession.libraryItemId, {
-      attributes: ['id', 'path', 'relPath', 'isFile']
+      attributes: ['id', 'path', 'relPath', 'isFile', 'libraryFiles']
     })
     if (!libraryItem) {
       return res.status(404).send('Library item not found')
     }
+
+    if (hasStrmFiles(libraryItem)) return res.status(409).send('STRM 书籍暂不支持整本下载')
 
     const itemPath = libraryItem.path
     const itemTitle = playbackSession.displayTitle

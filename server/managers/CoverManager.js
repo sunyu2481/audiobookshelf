@@ -1,3 +1,4 @@
+const { isStrmFile } = require('../utils/audioSource')
 const fs = require('../libs/fsExtra')
 const Path = require('path')
 const Logger = require('../Logger')
@@ -223,7 +224,7 @@ class CoverManager {
    * @returns {Promise<string>} returns cover path
    */
   async saveEmbeddedCoverArt(audioFiles, libraryItemId, libraryItemPath) {
-    let audioFileWithCover = audioFiles.find((af) => af.embeddedCoverArt)
+    let audioFileWithCover = audioFiles.find((af) => af.embeddedCoverArt && !isStrmFile(af))
     if (!audioFileWithCover) return null
 
     let coverDirPath = null

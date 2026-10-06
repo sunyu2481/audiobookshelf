@@ -19,9 +19,9 @@ const parseNameString = require('./parsers/parseNameString')
 function isMediaFile(mediaType, ext, audiobooksOnly = false) {
   if (!ext) return false
   const extclean = ext.slice(1).toLowerCase()
-  if (mediaType === 'podcast') return globals.SupportedAudioTypes.includes(extclean)
-  else if (audiobooksOnly) return globals.SupportedAudioTypes.includes(extclean)
-  return globals.SupportedAudioTypes.includes(extclean) || globals.SupportedEbookTypes.includes(extclean)
+  if (mediaType === 'podcast') return globals.SupportedAudioFileTypes.includes(extclean)
+  else if (audiobooksOnly) return globals.SupportedAudioFileTypes.includes(extclean)
+  return globals.SupportedAudioFileTypes.includes(extclean) || globals.SupportedEbookTypes.includes(extclean)
 }
 
 function isScannableNonMediaFile(ext) {
@@ -34,7 +34,7 @@ function checkFilepathIsAudioFile(filepath) {
   const ext = Path.extname(filepath)
   if (!ext) return false
   const extclean = ext.slice(1).toLowerCase()
-  return globals.SupportedAudioTypes.includes(extclean)
+  return globals.SupportedAudioFileTypes.includes(extclean)
 }
 module.exports.checkFilepathIsAudioFile = checkFilepathIsAudioFile
 
