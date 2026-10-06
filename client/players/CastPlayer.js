@@ -22,6 +22,8 @@ export default class CastPlayer extends EventEmitter {
 
     this.coverUrl = ''
     this.castPlayerState = 'IDLE'
+    this.finishedMedia = null
+    this.mediaInfoChanged = this.evtMediaInfoChanged.bind(this)
 
     // Supported audio codecs for chromecast
 
@@ -38,7 +40,8 @@ export default class CastPlayer extends EventEmitter {
     this.player = this.ctx.$root.castPlayer
     this.playerController = this.ctx.$root.castPlayerController
     this.playerController.addEventListener(
-      cast.framework.RemotePlayerEventType.MEDIA_INFO_CHANGED, this.evtMediaInfoChanged.bind(this))
+      cast.framework.RemotePlayerEventType.MEDIA_INFO_CHANGED, this.mediaInfoChanged)
+    this.playerController.addEventListener(cast.framework.RemotePlayerEventType.PLAYER_STATE_CHANGED, this.mediaInfoChanged)
   }
 
   evtMediaInfoChanged() {
@@ -57,7 +60,11 @@ export default class CastPlayer extends EventEmitter {
       this.currentTrackIndex = currentItemId - 1
     }
 
-    // TODO: Emit finished event
+    if (media.playerState === 'IDLE' && media.idleReason === 'FINISHED' && this.finishedMedia !== media.media.contentId) {
+      this.finishedMedia = media.media.contentId
+      this.currentTime = this.getDuration()
+      this.emit('finished')
+    }
     if (media.playerState !== this.castPlayerState) {
       this.emit('stateChange', media.playerState)
       this.castPlayerState = media.playerState
@@ -66,6 +73,8 @@ export default class CastPlayer extends EventEmitter {
 
   destroy() {
     if (this.playerController) {
+      this.playerController.removeEventListener(cast.framework.RemotePlayerEventType.MEDIA_INFO_CHANGED, this.mediaInfoChanged)
+      this.playerController.removeEventListener(cast.framework.RemotePlayerEventType.PLAYER_STATE_CHANGED, this.mediaInfoChanged)
       this.playerController.stop()
     }
   }
@@ -73,6 +82,8 @@ export default class CastPlayer extends EventEmitter {
   async set(libraryItem, tracks, isHlsTranscode, startTime, playWhenReady = false) {
     this.libraryItem = libraryItem
     this.audioTracks = tracks
+    this.currentTrackIndex = 0
+    this.finishedMedia = null
     this.isHlsTranscode = isHlsTranscode
     this.playWhenReady = playWhenReady
 
@@ -100,14 +111,15 @@ export default class CastPlayer extends EventEmitter {
   }
 
   play() {
-    if (this.playerController) this.playerController.playOrPause()
+    if (this.playerController && this.player.isPaused) this.playerController.playOrPause()
   }
 
   pause() {
-    if (this.playerController) this.playerController.playOrPause()
+    if (this.playerController && !this.player.isPaused) this.playerController.playOrPause()
   }
 
   getCurrentTime() {
+    if (this.finishedMedia) return this.getDuration()
     var currentTrackOffset = this.currentTrack.startOffset || 0
     return this.player ? currentTrackOffset + this.player.currentTime : 0
   }

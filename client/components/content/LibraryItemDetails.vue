@@ -142,6 +142,7 @@ export default {
       if (this.isPodcast) return this.$elapsedPrettyExtended(this.totalPodcastDuration)
 
       if (!this.tracks.length && !this.audioFile) return 'N/A'
+      if (this.duration == null) return '待获取'
       if (this.audioFile) return this.$elapsedPrettyExtended(this.duration)
       return this.$elapsedPretty(this.duration)
     },

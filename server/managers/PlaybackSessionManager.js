@@ -15,7 +15,8 @@ const { PlayMethod } = require('../utils/constants')
 const PlaybackSession = require('../objects/PlaybackSession')
 const DeviceInfo = require('../objects/DeviceInfo')
 const Stream = require('../objects/Stream')
-const { isStrmFile } = require('../utils/audioSource')
+const { isStrmFile, getTrackId, hasCompleteTimeline } = require('../utils/audioSource')
+const trackPlayback = require('../utils/trackPlayback')
 
 class PlaybackSessionManager {
   constructor() {
@@ -25,6 +26,7 @@ class PlaybackSessionManager {
 
     /** @type {PlaybackSession[]} */
     this.sessions = []
+    this.trackRequests = new Map()
   }
 
   /**
@@ -131,6 +133,7 @@ class PlaybackSessionManager {
    * @returns
    */
   async syncLocalSession(user, sessionJson, deviceInfo) {
+    if (sessionJson.trackPlayback) return { id: sessionJson.id, success: false, error: '按集播放请通过在线会话同步进度' }
     // TODO: Combine libraryItem query with library query
     const libraryItem = await Database.libraryItemModel.getExpandedById(sessionJson.libraryItemId)
     const episode = sessionJson.episodeId && libraryItem && libraryItem.isPodcast ? libraryItem.media.podcastEpisodes.find((pe) => pe.id === sessionJson.episodeId) : null
@@ -319,9 +322,12 @@ class PlaybackSessionManager {
   async startSession(user, deviceInfo, libraryItem, episodeId, options) {
     const tracks = libraryItem.getTrackList(episodeId)
     const hasRemoteAudio = tracks.some(isStrmFile)
+    if (hasRemoteAudio && options.supportsTrackPlayback === true) {
+      return this.startTrackSession(user, deviceInfo, libraryItem, options)
+    }
     if (hasRemoteAudio) {
       if (tracks.some((track) => isStrmFile(track) && (track.error || !Number.isFinite(track.duration) || track.duration <= 0))) {
-        throw Object.assign(new Error('远程音频尚未完成探测，请检查来源后重新扫描书籍'), { status: 422 })
+        throw Object.assign(new Error('此客户端需要完整音频时长。请使用网页版按集播放，或在书籍页面执行“补全远程信息”后再试'), { status: 422 })
       }
       if (options.forceTranscode || (!options.forceDirectPlay && !libraryItem.media.checkCanDirectPlay(options.supportedMimeTypes, episodeId))) {
         throw Object.assign(new Error('当前播放器不支持此音频格式，STRM 音频暂不支持转码'), { status: 415 })
@@ -346,6 +352,12 @@ class PlaybackSessionManager {
         // Keep userStartTime as 0 so the client restarts the media
       } else {
         userStartTime = Number.parseFloat(userProgress.currentTime) || 0
+        if (hasRemoteAudio && userProgress.extraData?.trackProgress) {
+          const position = userProgress.extraData.trackProgress
+          const index = tracks.findIndex((track) => getTrackId(track) === position.trackId)
+          if (index < 0) throw Object.assign(new Error('上次播放的音轨已被移除，请从网页版重新选择'), { status: 422 })
+          userStartTime = tracks.slice(0, index).reduce((sum, track) => sum + track.duration, 0) + position.currentTime
+        }
       }
     }
     const newPlaybackSession = new PlaybackSession()
@@ -379,6 +391,41 @@ class PlaybackSessionManager {
     return newPlaybackSession
   }
 
+  async startTrackSession(user, deviceInfo, libraryItem, options) {
+    const key = `${user.id}:${deviceInfo.id}`
+    const request = Symbol()
+    this.trackRequests.set(key, request)
+    try {
+      return await this.prepareTrackSession(user, deviceInfo, libraryItem, options, () => this.trackRequests.get(key) === request)
+    } finally {
+      if (this.trackRequests.get(key) === request) this.trackRequests.delete(key)
+    }
+  }
+
+  async prepareTrackSession(user, deviceInfo, libraryItem, options, isCurrentRequest) {
+    if (options.forceTranscode) throw Object.assign(new Error('STRM 音频暂不支持转码'), { status: 415 })
+    const position = trackPlayback.selectPosition(libraryItem.media.includedAudioFiles, user.getMediaProgress(libraryItem.media.id), options)
+    const prepared = await trackPlayback.ensureTrack(libraryItem.id, position.trackId)
+    if (!isCurrentRequest()) throw Object.assign(new Error('此播放请求已被新的选集请求替代'), { status: 409 })
+    libraryItem.media = prepared.media
+    const file = libraryItem.media.includedAudioFiles.find((track) => getTrackId(track) === position.trackId)
+    if (!options.forceDirectPlay && !options.supportedMimeTypes?.includes(file.mimeType)) throw Object.assign(new Error('当前播放器不支持此音轨格式，STRM 音频暂不支持转码'), { status: 415 })
+    if (!(file.duration > 0)) throw Object.assign(new Error('当前音轨没有有效时长'), { status: 422 })
+    for (const session of this.sessions.filter((session) => session.userId === user.id && session.deviceId === deviceInfo.id)) await this.closeSession(user, session)
+    if (!isCurrentRequest()) throw Object.assign(new Error('此播放请求已被新的选集请求替代'), { status: 409 })
+    const session = new PlaybackSession()
+    session.setData(libraryItem, user.id, options.mediaPlayer || 'unknown', deviceInfo, Math.min(position.currentTime, Math.max(0, file.duration - 0.1)))
+    session.trackPlayback = trackPlayback.describe(libraryItem, position.trackId)
+    session.duration = file.duration
+    session.chapters = file.chapters?.length ? structuredClone(file.chapters) : [{ id: 0, start: 0, end: file.duration, title: file.metadata.filename }]
+    session.audioTracks = [{ ...structuredClone(file), id: position.trackId, index: 1, startOffset: 0, title: file.metadata.filename, contentUrl: `/api/items/${libraryItem.id}/file/${file.ino}` }]
+    session.playMethod = PlayMethod.DIRECTPLAY
+    this.sessions.push(session)
+    SocketAuthority.libraryItemEmitter('item_updated', libraryItem)
+    SocketAuthority.adminEmitter('user_stream_update', user.toJSONForPublic(this.sessions))
+    return session
+  }
+
   /**
    *
    * @param {import('../models/User')} user
@@ -387,6 +434,7 @@ class PlaybackSessionManager {
    * @returns {Promise<boolean>}
    */
   async syncSession(user, session, syncData) {
+    if (!syncData || !Number.isFinite(syncData.currentTime) || syncData.currentTime < 0 || !Number.isFinite(syncData.timeListened) || syncData.timeListened < 0) return false
     // TODO: Combine libraryItem query with library query
     const libraryItem = await Database.libraryItemModel.getExpandedById(session.libraryItemId)
     if (!libraryItem) {
@@ -404,6 +452,14 @@ class PlaybackSessionManager {
     session.addListeningTime(syncData.timeListened)
     Logger.debug(`[PlaybackSessionManager] syncSession "${session.id}" (Device: ${session.deviceDescription}) | Total Time Listened: ${session.timeListening}`)
 
+    let trackProgressPayload = {}
+    if (session.trackPlayback) {
+      if (!libraryItem.media.includedAudioFiles.some((track) => getTrackId(track) === session.trackPlayback.trackId && track.duration > 0)) return false
+      trackProgressPayload = trackPlayback.progressPayload(libraryItem, session.trackPlayback, syncData.currentTime, syncData.finishedTrack === true)
+    } else if (libraryItem.media.includedAudioFiles?.some(isStrmFile) && hasCompleteTimeline(libraryItem.media.includedAudioFiles)) {
+      const position = trackPlayback.locateTime(libraryItem.media.includedAudioFiles, syncData.currentTime)
+      if (position) trackProgressPayload.trackProgress = trackPlayback.progressPayload(libraryItem, position, position.currentTime).trackProgress
+    }
     const updateResponse = await user.createUpdateMediaProgressFromPayload({
       libraryItemId: libraryItem.id,
       episodeId: session.episodeId,
@@ -412,7 +468,8 @@ class PlaybackSessionManager {
       currentTime: syncData.currentTime,
       progress: session.progress,
       markAsFinishedTimeRemaining: library.librarySettings.markAsFinishedTimeRemaining,
-      markAsFinishedPercentComplete: library.librarySettings.markAsFinishedPercentComplete
+      markAsFinishedPercentComplete: library.librarySettings.markAsFinishedPercentComplete,
+      ...trackProgressPayload
     })
     if (updateResponse.mediaProgress) {
       SocketAuthority.clientEmitter(user.id, 'user_item_progress_updated', {

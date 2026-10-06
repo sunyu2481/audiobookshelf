@@ -118,6 +118,9 @@ class ApiRouter {
     this.router.post('/items/:id/play/:episodeId', LibraryItemController.middleware.bind(this), LibraryItemController.startEpisodePlaybackSession.bind(this))
     this.router.patch('/items/:id/tracks', LibraryItemController.middleware.bind(this), LibraryItemController.updateTracks.bind(this))
     this.router.post('/items/:id/scan', LibraryItemController.middleware.bind(this), LibraryItemController.scan.bind(this))
+    this.router.post('/items/:id/strm/probe', LibraryItemController.middleware.bind(this), require('../controllers/StrmController').start)
+    this.router.get('/items/:id/strm/probe', LibraryItemController.middleware.bind(this), require('../controllers/StrmController').status)
+    this.router.delete('/items/:id/strm/probe', LibraryItemController.middleware.bind(this), require('../controllers/StrmController').cancel)
     this.router.get('/items/:id/metadata-object', LibraryItemController.middleware.bind(this), LibraryItemController.getMetadataObject.bind(this))
     this.router.post('/items/:id/chapters', LibraryItemController.middleware.bind(this), LibraryItemController.updateMediaChapters.bind(this))
     this.router.get('/items/:id/ffprobe/:fileid', LibraryItemController.middleware.bind(this), LibraryItemController.getFFprobeData.bind(this))
@@ -241,6 +244,7 @@ class ApiRouter {
     this.router.get('/session/:id', SessionController.openSessionMiddleware.bind(this), SessionController.getOpenSession.bind(this))
     this.router.post('/session/:id/sync', SessionController.openSessionMiddleware.bind(this), SessionController.sync.bind(this))
     this.router.post('/session/:id/close', SessionController.openSessionMiddleware.bind(this), SessionController.close.bind(this))
+    this.router.post('/session/:id/prepare-next', SessionController.openSessionMiddleware.bind(this), require('../controllers/StrmController').prepareNext)
 
     //
     // Podcast Routes

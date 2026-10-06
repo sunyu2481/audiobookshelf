@@ -165,6 +165,7 @@ class MediaProgress extends Model {
       duration: this.duration,
       progress: this.extraData?.progress || 0,
       currentTime: this.currentTime,
+      ...(this.extraData?.trackProgress ? { trackProgress: structuredClone(this.extraData.trackProgress) } : {}),
       isFinished: !!this.isFinished,
       hideFromContinueListening: !!this.hideFromContinueListening,
       ebookLocation: this.ebookLocation,
@@ -189,13 +190,22 @@ class MediaProgress extends Model {
    */
   async applyProgressUpdate(progressPayload) {
     if (!this.extraData) this.extraData = {}
+    const trackProgress = progressPayload.trackProgress
+    if (trackProgress !== undefined) {
+      this.extraData = { ...this.extraData, trackProgress }
+      this.changed('extraData', true)
+      this.hideFromContinueListening = false
+    } else if (progressPayload.isFinished === false || progressPayload.currentTime !== undefined) {
+      delete this.extraData.trackProgress
+      this.changed('extraData', true)
+    }
     if (progressPayload.isFinished !== undefined) {
       if (progressPayload.isFinished && !this.isFinished) {
         this.finishedAt = progressPayload.finishedAt || Date.now()
         this.extraData.progress = 1
         this.changed('extraData', true)
         delete progressPayload.finishedAt
-      } else if (!progressPayload.isFinished && this.isFinished) {
+      } else if (!progressPayload.isFinished && this.isFinished && !trackProgress) {
         this.finishedAt = null
         this.extraData.progress = 0
         this.currentTime = 0
@@ -210,6 +220,11 @@ class MediaProgress extends Model {
     }
 
     this.set(progressPayload)
+    if (trackProgress) {
+      this.extraData.progress = progressPayload.isFinished ? 1 : progressPayload.progress || 0
+      if (progressPayload.isFinished === false) this.finishedAt = null
+      this.changed('extraData', true)
+    }
 
     // Reset hideFromContinueListening if the progress has changed
     if (this.changed('currentTime') && !progressPayload.hideFromContinueListening) {
@@ -221,7 +236,7 @@ class MediaProgress extends Model {
     // Check if progress is far enough to mark as finished
     //   - If markAsFinishedPercentComplete is provided, use that otherwise use markAsFinishedTimeRemaining (default 10 seconds)
     let shouldMarkAsFinished = false
-    if (this.duration) {
+    if (this.duration && !(trackProgress && progressPayload.isFinished !== undefined)) {
       if (!isNullOrNaN(progressPayload.markAsFinishedPercentComplete) && progressPayload.markAsFinishedPercentComplete > 0) {
         const markAsFinishedPercentComplete = Number(progressPayload.markAsFinishedPercentComplete) / 100
         shouldMarkAsFinished = markAsFinishedPercentComplete < this.progress
@@ -242,7 +257,7 @@ class MediaProgress extends Model {
       this.finishedAt = this.finishedAt || Date.now()
       this.extraData.progress = 1
       this.changed('extraData', true)
-    } else if (this.isFinished && this.changed('currentTime') && !shouldMarkAsFinished) {
+    } else if (this.isFinished && this.changed('currentTime') && !shouldMarkAsFinished && progressPayload.isFinished !== true) {
       this.isFinished = false
       this.finishedAt = null
     }

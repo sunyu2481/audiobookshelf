@@ -812,6 +812,7 @@ class User extends Model {
         createdAt: progressPayload.createdAt || new Date(),
         extraData: {
           libraryItemId: progressPayload.libraryItemId,
+          ...(progressPayload.trackProgress ? { trackProgress: progressPayload.trackProgress } : {}),
           progress: isNullOrNaN(progressPayload.progress) ? 0 : Number(progressPayload.progress)
         }
       }
@@ -838,8 +839,8 @@ class User extends Model {
    * @param {number} time
    * @returns {AudioBookmarkObject|null}
    */
-  findBookmark(libraryItemId, time) {
-    return this.bookmarks.find((bm) => bm.libraryItemId === libraryItemId && bm.time == time)
+  findBookmark(libraryItemId, time, trackId = null) {
+    return this.bookmarks.find((bm) => bm.libraryItemId === libraryItemId && bm.time == time && (bm.trackId || null) === trackId)
   }
 
   /**
@@ -850,8 +851,8 @@ class User extends Model {
    * @param {string} title
    * @returns {Promise<AudioBookmarkObject>}
    */
-  async createBookmark(libraryItemId, time, title) {
-    const existingBookmark = this.findBookmark(libraryItemId, time)
+  async createBookmark(libraryItemId, time, title, trackId = null, trackTitle = null) {
+    const existingBookmark = this.findBookmark(libraryItemId, time, trackId)
     if (existingBookmark) {
       Logger.warn('[User] Create Bookmark already exists for this time')
       if (existingBookmark.title !== title) {
@@ -864,6 +865,7 @@ class User extends Model {
 
     const newBookmark = {
       libraryItemId,
+      ...(trackId ? { trackId, trackTitle } : {}),
       time,
       title,
       createdAt: Date.now()
@@ -882,8 +884,8 @@ class User extends Model {
    * @param {string} title
    * @returns {Promise<AudioBookmarkObject>}
    */
-  async updateBookmark(libraryItemId, time, title) {
-    const bookmark = this.findBookmark(libraryItemId, time)
+  async updateBookmark(libraryItemId, time, title, trackId = null) {
+    const bookmark = this.findBookmark(libraryItemId, time, trackId)
     if (!bookmark) {
       Logger.error(`[User] updateBookmark not found`)
       return null
@@ -901,12 +903,12 @@ class User extends Model {
    * @param {number} time
    * @returns {Promise<boolean>} - true if bookmark was removed
    */
-  async removeBookmark(libraryItemId, time) {
-    if (!this.findBookmark(libraryItemId, time)) {
+  async removeBookmark(libraryItemId, time, trackId = null) {
+    if (!this.findBookmark(libraryItemId, time, trackId)) {
       Logger.error(`[User] removeBookmark not found`)
       return false
     }
-    this.bookmarks = this.bookmarks.filter((bm) => bm.libraryItemId !== libraryItemId || bm.time !== time)
+    this.bookmarks = this.bookmarks.filter((bm) => bm.libraryItemId !== libraryItemId || bm.time !== time || (bm.trackId || null) !== trackId)
     this.changed('bookmarks', true)
     await this.save()
     return true

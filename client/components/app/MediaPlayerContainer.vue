@@ -1,5 +1,5 @@
 <template>
-  <div v-if="streamLibraryItem" id="mediaPlayerContainer" class="w-full fixed bottom-0 left-0 right-0 h-48 lg:h-40 z-50 bg-primary px-2 lg:px-4 pb-1 lg:pb-4 pt-2">
+  <div v-if="streamLibraryItem" id="mediaPlayerContainer" :class="playerHandler.trackPlayback ? 'h-56 lg:h-48' : 'h-48 lg:h-40'" class="w-full fixed bottom-0 left-0 right-0 z-50 bg-primary px-2 lg:px-4 pb-1 lg:pb-4 pt-2">
     <div class="absolute left-2 top-2 lg:left-4 cursor-pointer">
       <covers-book-cover expand-on-click :library-item="streamLibraryItem" :width="bookCoverWidth" :book-cover-aspect-ratio="coverAspectRatio" />
     </div>
@@ -22,7 +22,7 @@
 
         <div class="text-gray-400 flex items-center">
           <span class="material-symbols text-xs">schedule</span>
-          <p class="font-mono text-xs sm:text-sm pl-1 sm:pl-1.5 pb-px">{{ totalDurationPretty }}</p>
+          <p class="font-mono text-xs sm:text-sm pl-1 sm:pl-1.5 pb-px max-w-[calc(100vw-14rem)] lg:max-w-none truncate">{{ totalDurationPretty }}</p>
         </div>
       </div>
       <div class="grow" />
@@ -33,6 +33,7 @@
     <player-ui
       ref="audioPlayer"
       :chapters="chapters"
+      :track-playback="playerHandler.trackPlayback"
       :current-chapter="currentChapter"
       :paused="!isPlaying"
       :loading="playerLoading"
@@ -48,6 +49,7 @@
       @setVolume="setVolume"
       @setPlaybackRate="setPlaybackRate"
       @seek="seek"
+      @selectTrack="selectTrack"
       @nextItemInQueue="playNextItemInQueue"
       @close="closePlayer"
       @showBookmarks="showBookmarks"
@@ -55,7 +57,7 @@
       @showPlayerQueueItems="showPlayerQueueItemsModal = true"
     />
 
-    <modals-bookmarks-modal v-model="showBookmarksModal" :bookmarks="bookmarks" :current-time="bookmarkCurrentTime" :playback-rate="currentPlaybackRate" :library-item-id="libraryItemId" @select="selectBookmark" />
+    <modals-bookmarks-modal v-model="showBookmarksModal" :bookmarks="bookmarks" :current-time="bookmarkCurrentTime" :track-id="playerHandler.trackPlayback && playerHandler.trackPlayback.trackId" :playback-rate="currentPlaybackRate" :library-item-id="libraryItemId" @select="selectBookmark" />
 
     <modals-sleep-timer-modal v-model="showSleepTimerModal" :timer-set="sleepTimerSet" :timer-type="sleepTimerType" :remaining="sleepTimerRemaining" :has-chapters="!!chapters.length" @set="setSleepTimer" @cancel="cancelSleepTimer" @increment="incrementSleepTimer" @decrement="decrementSleepTimer" />
 
@@ -142,6 +144,7 @@ export default {
       return this.media.metadata || {}
     },
     chapters() {
+      if (this.playerHandler.trackPlayback) return this.playerHandler.sessionChapters
       if (this.streamEpisode) return this.streamEpisode.chapters || []
       return this.media.chapters || []
     },
@@ -159,6 +162,11 @@ export default {
       return this.streamLibraryItem?.libraryId || null
     },
     totalDurationPretty() {
+      if (this.playerHandler.trackPlayback) {
+        const time = this.$secondsToTimestamp(this.totalDuration / this.currentPlaybackRate)
+        const position = `第 ${this.playerHandler.trackPlayback.index + 1}/${this.playerHandler.trackPlayback.total} 集`
+        return this.isMobile ? `${position} · ${time}` : `${position} · 本集 ${time}`
+      }
       // Adjusted by playback rate
       return this.$secondsToTimestamp(this.totalDuration / this.currentPlaybackRate)
     },
@@ -297,7 +305,14 @@ export default {
     },
     playbackTimeUpdate(time) {
       // When updating progress from another session
-      this.playerHandler.seek(time, false)
+      if (this.playerHandler.trackPlayback) {
+        if (time.trackProgress?.trackId === this.playerHandler.trackPlayback.trackId) this.playerHandler.seek(time.trackProgress.currentTime, false)
+        return
+      }
+      this.playerHandler.seek(typeof time === 'number' ? time : time.currentTime, false)
+    },
+    selectTrack(trackId) {
+      return this.playerHandler.selectTrack(trackId)
     },
     setCurrentTime(time) {
       this.currentTime = time
@@ -325,7 +340,9 @@ export default {
       this.showBookmarksModal = true
     },
     selectBookmark(bookmark) {
-      this.seek(bookmark.time)
+      if (bookmark.trackId) this.playerHandler.selectTrack(bookmark.trackId, bookmark.time)
+      else if (this.playerHandler.trackPlayback) this.playerHandler.seekBookTime(bookmark.time)
+      else this.seek(bookmark.time)
       this.showBookmarksModal = false
     },
     closePlayer() {
@@ -410,8 +427,8 @@ export default {
         navigator.mediaSession.setActionHandler('seekbackward', this.mediaSessionSeekBackward)
         navigator.mediaSession.setActionHandler('seekforward', this.mediaSessionSeekForward)
         navigator.mediaSession.setActionHandler('seekto', this.mediaSessionSeekTo)
-        navigator.mediaSession.setActionHandler('previoustrack', this.mediaSessionSeekBackward)
-        navigator.mediaSession.setActionHandler('nexttrack', this.mediaSessionSeekForward)
+        navigator.mediaSession.setActionHandler('previoustrack', this.playerHandler.trackPlayback ? this.mediaSessionPreviousTrack : this.mediaSessionSeekBackward)
+        navigator.mediaSession.setActionHandler('nexttrack', this.playerHandler.trackPlayback ? () => this.$refs.audioPlayer?.goToNext() : this.mediaSessionSeekForward)
       } else {
         console.warn('Media session not available')
       }
@@ -502,7 +519,10 @@ export default {
       const episodeId = payload.episodeId || null
 
       if (this.playerHandler.libraryItemId == libraryItemId && this.playerHandler.episodeId == episodeId) {
+        if (payload.trackId) return this.playerHandler.selectTrack(payload.trackId, payload.trackTime || 0)
+        if (!this.playerHandler.currentSessionId) return this.playerHandler.prepare()
         if (payload.startTime !== null && !isNaN(payload.startTime)) {
+          if (this.playerHandler.trackPlayback) return this.playerHandler.seekBookTime(payload.startTime)
           this.seek(payload.startTime)
         } else {
           this.playerHandler.play()
@@ -528,7 +548,7 @@ export default {
         if (this.$refs.audioPlayer) this.$refs.audioPlayer.checkUpdateChapterTrack()
       })
 
-      this.playerHandler.load(libraryItem, episodeId, true, this.currentPlaybackRate, payload.startTime)
+      this.playerHandler.load(libraryItem, episodeId, true, this.currentPlaybackRate, payload.startTime, payload.trackId ? { trackId: payload.trackId, trackTime: payload.trackTime || 0 } : null)
     },
     pauseItem() {
       this.playerHandler.pause()

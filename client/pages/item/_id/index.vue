@@ -68,10 +68,11 @@
           </div>
 
           <!-- Progress -->
-          <div v-if="!isPodcast && progressPercent > 0" class="px-4 py-2 mt-4 bg-primary text-sm font-semibold rounded-md text-gray-100 relative max-w-max mx-auto md:mx-0" :class="resettingProgress ? 'opacity-25' : ''">
-            <p v-if="progressPercent < 1" class="leading-6">{{ $strings.LabelYourProgress }}: {{ Math.round(progressPercent * 100) }}%</p>
+          <div v-if="!isPodcast && (progressPercent > 0 || userMediaProgress && userMediaProgress.trackProgress)" class="px-4 py-2 mt-4 bg-primary text-sm font-semibold rounded-md text-gray-100 relative max-w-max mx-auto md:mx-0" :class="resettingProgress ? 'opacity-25' : ''">
+            <p v-if="userMediaProgress.trackProgress && !userIsFinished" class="leading-6">上次播放：第 {{ userMediaProgress.trackProgress.index + 1 }} / {{ userMediaProgress.trackProgress.total }} 集，{{ $secondsToTimestamp(userMediaProgress.trackProgress.currentTime) }}</p>
+            <p v-else-if="progressPercent < 1" class="leading-6">{{ $strings.LabelYourProgress }}: {{ Math.round(progressPercent * 100) }}%</p>
             <p v-else class="text-xs">{{ $strings.LabelFinished }} {{ $formatDate(userProgressFinishedAt, dateFormat) }}</p>
-            <p v-if="progressPercent < 1 && !useEBookProgress" class="text-gray-200 text-xs">{{ $getString('LabelTimeRemaining', [$elapsedPretty(userTimeRemaining)]) }}</p>
+            <p v-if="progressPercent < 1 && !useEBookProgress && duration" class="text-gray-200 text-xs">{{ $getString('LabelTimeRemaining', [$elapsedPretty(userTimeRemaining)]) }}</p>
             <p class="text-gray-400 text-xs pt-1">{{ $strings.LabelStarted }} {{ $formatDate(userProgressStartedAt, dateFormat) }}</p>
 
             <div v-if="!resettingProgress" class="absolute -top-1.5 -right-1.5 p-1 w-5 h-5 rounded-full bg-bg hover:bg-error border border-primary flex items-center justify-center cursor-pointer" @click.stop="clearProgressClick">
@@ -436,6 +437,16 @@ export default {
   methods: {
     selectBookmark(bookmark) {
       if (!bookmark) return
+      if (bookmark.trackId) {
+        this.$eventBus.$emit('play-item', { libraryItemId: this.libraryItemId, trackId: bookmark.trackId, trackTime: bookmark.time })
+        this.showBookmarksModal = false
+        return
+      }
+      if (this.tracks.some((track) => track.metadata.ext.toLowerCase() === '.strm')) {
+        this.$eventBus.$emit('play-item', { libraryItemId: this.libraryItemId, startTime: bookmark.time })
+        this.showBookmarksModal = false
+        return
+      }
       if (this.isStreaming) {
         this.$eventBus.$emit('playback-seek', bookmark.time)
       } else if (this.streamLibraryItem) {

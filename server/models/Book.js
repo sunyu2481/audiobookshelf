@@ -295,6 +295,7 @@ class Book extends Model {
     let startOffset = 0
     return this.includedAudioFiles.map((af) => {
       const track = structuredClone(af)
+      track.id = require('../utils/audioSource').getTrackId(af)
       track.title = af.metadata.filename
       track.startOffset = startOffset
       track.contentUrl = `/api/items/${libraryItemId}/file/${track.ino}`

@@ -46,12 +46,15 @@
       <player-playback-controls :loading="loading" :seek-loading="seekLoading" :playback-rate.sync="playbackRate" :paused="paused" :hasNextChapter="hasNextChapter" :hasNextItemInQueue="hasNextItemInQueue" @prevChapter="prevChapter" @next="goToNext" @jumpForward="jumpForward" @jumpBackward="jumpBackward" @setPlaybackRate="setPlaybackRate" @playPause="playPause" />
     </div>
 
+    <select v-if="trackPlayback" aria-label="选择音轨" class="w-full bg-primary text-sm border border-gray-600 rounded px-2 py-1 mb-1" :value="trackPlayback.trackId" :disabled="loading" @change="$emit('selectTrack', $event.target.value)">
+      <option v-for="(track, index) in trackPlayback.tracks" :key="track.id" :value="track.id">{{ index + 1 }}. {{ track.title }} · {{ track.duration ? $secondsToTimestamp(track.duration) : '时长待获取' }}</option>
+    </select>
     <player-track-bar ref="trackbar" :loading="loading" :chapters="chapters" :duration="duration" :current-chapter="currentChapter" :playback-rate="playbackRate" @seek="seek" />
 
     <div class="relative flex items-center justify-between">
       <div class="grow flex items-center">
         <p ref="currentTimestamp" class="font-mono text-xxs sm:text-sm text-gray-100 pointer-events-auto">00:00:00</p>
-        <p class="font-mono text-sm hidden sm:block text-gray-100 pointer-events-auto">&nbsp;/&nbsp;{{ progressPercent }}%</p>
+        <p class="font-mono text-sm hidden sm:block text-gray-100 pointer-events-auto">&nbsp;/&nbsp;{{ trackPlayback ? '本集 ' : '' }}{{ progressPercent }}%</p>
       </div>
       <div class="absolute left-1/2 transform -translate-x-1/2">
         <p class="text-xs sm:text-sm text-gray-300 pt-0.5 px-2 truncate">
@@ -73,6 +76,7 @@
 export default {
   props: {
     loading: Boolean,
+    trackPlayback: Object,
     paused: Boolean,
     chapters: {
       type: Array,
@@ -168,6 +172,7 @@ export default {
       return this.chapters.findIndex((ch) => ch.id === this.currentChapter.id)
     },
     hasNextChapter() {
+      if (this.trackPlayback) return this.trackPlayback.index < this.trackPlayback.total - 1
       if (!this.chapters.length) return false
       return this.currentChapterIndex < this.chapters.length - 1
     },
@@ -265,6 +270,10 @@ export default {
       this.seek(0)
     },
     prevChapter() {
+      if (this.trackPlayback) {
+        if (this.currentTime > 3 || this.trackPlayback.index === 0) return this.restart()
+        return this.$emit('selectTrack', this.trackPlayback.tracks[this.trackPlayback.index - 1].id)
+      }
       if (!this.currentChapter || this.currentChapterIndex === 0) {
         return this.restart()
       }
@@ -277,6 +286,7 @@ export default {
       }
     },
     goToNext() {
+      if (this.trackPlayback && this.hasNextChapter) return this.$emit('selectTrack', this.trackPlayback.tracks[this.trackPlayback.index + 1].id)
       if (this.hasNextChapter) {
         const nextChapter = this.chapters[this.currentChapterIndex + 1]
         this.seek(nextChapter.start)

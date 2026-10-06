@@ -19,7 +19,7 @@
           </div>
         </form>
       </template>
-      <p v-else class="pl-2 pr-2 truncate">{{ bookmark.title }}</p>
+      <div v-else class="pl-2 pr-2 truncate"><p>{{ bookmark.title }}</p><p v-if="bookmark.trackTitle" class="text-xs text-gray-400 truncate">{{ bookmark.trackTitle }}</p></div>
     </div>
     <div v-if="!isEditing" class="h-full flex items-center justify-end transform" :class="isHovering ? 'transition-transform translate-0 w-16' : 'translate-x-40 w-0'">
       <span class="material-symbols text-xl mr-2 text-gray-200 hover:text-yellow-400" @click.stop="editClick">edit</span>

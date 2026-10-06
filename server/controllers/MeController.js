@@ -346,7 +346,10 @@ class MeController {
       return res.status(400).send('Invalid title')
     }
 
-    const bookmark = await req.user.createBookmark(req.params.id, time, title)
+    const trackId = req.body.trackId || null
+    const track = trackId && libraryItem.media.includedAudioFiles?.find((file) => require('../utils/audioSource').getTrackId(file) === trackId)
+    if (trackId && !track) return res.status(422).send('书签音轨不存在')
+    const bookmark = await req.user.createBookmark(req.params.id, time, title, trackId, track?.metadata.filename)
     SocketAuthority.clientEmitter(req.user.id, 'user_updated', req.user.toOldJSONForBrowser())
     res.json(bookmark)
   }
@@ -379,7 +382,7 @@ class MeController {
       return res.status(400).send('Invalid title')
     }
 
-    const bookmark = await req.user.updateBookmark(req.params.id, time, title)
+    const bookmark = await req.user.updateBookmark(req.params.id, time, title, req.body.trackId || null)
     if (!bookmark) {
       Logger.error(`[MeController] updateBookmark not found for library item id "${req.params.id}" and time "${time}"`)
       return res.sendStatus(404)
@@ -412,12 +415,12 @@ class MeController {
       return res.status(400).send('Invalid time')
     }
 
-    if (!req.user.findBookmark(req.params.id, time)) {
+    if (!req.user.findBookmark(req.params.id, time, req.query.trackId || null)) {
       Logger.error(`[MeController] removeBookmark not found`)
       return res.sendStatus(404)
     }
 
-    await req.user.removeBookmark(req.params.id, time)
+    await req.user.removeBookmark(req.params.id, time, req.query.trackId || null)
 
     SocketAuthority.clientEmitter(req.user.id, 'user_updated', req.user.toOldJSONForBrowser())
     res.sendStatus(200)

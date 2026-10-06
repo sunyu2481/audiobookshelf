@@ -93,6 +93,7 @@ class PlaybackSession extends Model {
       displayAuthor: playbackSessionExpanded.displayAuthor,
       coverPath: playbackSessionExpanded.coverPath,
       duration: playbackSessionExpanded.duration,
+      trackPlayback: playbackSessionExpanded.extraData?.trackPlayback || null,
       playMethod: playbackSessionExpanded.playMethod,
       mediaPlayer: playbackSessionExpanded.mediaPlayer,
       deviceInfo: playbackSessionExpanded.device?.getOldDevice() || null,
@@ -156,7 +157,8 @@ class PlaybackSession extends Model {
       date: oldPlaybackSession.date,
       dayOfWeek: oldPlaybackSession.dayOfWeek,
       extraData: {
-        libraryItemId: oldPlaybackSession.libraryItemId
+        libraryItemId: oldPlaybackSession.libraryItemId,
+        ...(oldPlaybackSession.trackPlayback ? { trackPlayback: { trackId: oldPlaybackSession.trackPlayback.trackId, index: oldPlaybackSession.trackPlayback.index, total: oldPlaybackSession.trackPlayback.total } } : {})
       }
     }
   }

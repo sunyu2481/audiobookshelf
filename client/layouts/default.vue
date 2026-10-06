@@ -301,7 +301,7 @@ export default {
           if (this.$store.state.streamIsPlaying) {
             this.$toast.update('multiple-sessions', { content: `Another session is open for this item on device ${payload.deviceDescription}`, options: { timeout: 20000, type: 'warning', pauseOnFocusLoss: false } }, true)
           } else {
-            this.$eventBus.$emit('playback-time-update', payload.data.currentTime)
+            this.$eventBus.$emit('playback-time-update', payload.data)
           }
         }
       }

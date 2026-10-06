@@ -8,7 +8,7 @@
     <div v-if="show" class="w-full rounded-lg bg-bg box-shadow-md relative" style="max-height: 80vh">
       <div v-if="bookmarks.length" class="h-full max-h-[calc(80vh-60px)] w-full relative overflow-y-auto overflow-x-hidden">
         <template v-for="bookmark in bookmarks">
-          <modals-bookmarks-bookmark-item :key="bookmark.id" :highlight="currentTime === bookmark.time" :bookmark="bookmark" :playback-rate="playbackRate" @click="clickBookmark" @delete="deleteBookmark" />
+          <modals-bookmarks-bookmark-item :key="`${bookmark.trackId || ''}:${bookmark.time}`" :highlight="currentTime === bookmark.time && (bookmark.trackId || null) === (trackId || null)" :bookmark="bookmark" :playback-rate="playbackRate" @click="clickBookmark" @delete="deleteBookmark" />
         </template>
       </div>
       <div v-else class="flex h-32 items-center justify-center">
@@ -47,6 +47,7 @@ export default {
       default: 0
     },
     libraryItemId: String,
+    trackId: String,
     playbackRate: Number,
     hideCreate: Boolean
   },
@@ -76,7 +77,7 @@ export default {
       }
     },
     canCreateBookmark() {
-      return !this.bookmarks.find((bm) => Math.abs(this.currentTime - bm.time) < 1)
+      return !this.bookmarks.find((bm) => Math.abs(this.currentTime - bm.time) < 1 && (bm.trackId || null) === (this.trackId || null))
     },
     dateFormat() {
       return this.$store.getters['getServerSetting']('dateFormat')
@@ -93,7 +94,7 @@ export default {
     },
     deleteBookmark(bm) {
       this.$axios
-        .$delete(`/api/me/item/${this.libraryItemId}/bookmark/${bm.time}`)
+        .$delete(`/api/me/item/${this.libraryItemId}/bookmark/${bm.time}`, { params: bm.trackId ? { trackId: bm.trackId } : {} })
         .then(() => {
           this.$toast.success(this.$strings.ToastBookmarkRemoveSuccess)
         })
@@ -112,6 +113,7 @@ export default {
       }
       var bookmark = {
         title: this.newBookmarkTitle,
+        ...(this.trackId ? { trackId: this.trackId } : {}),
         time: Math.floor(this.currentTime)
       }
       this.$axios

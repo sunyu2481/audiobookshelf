@@ -3,7 +3,7 @@
     <td class="text-center">
       <p>{{ track.index }}</p>
     </td>
-    <td class="font-sans">{{ showFullPath ? track.metadata.path : track.metadata.filename }}</td>
+    <td class="font-sans"><button v-if="canSelectTrack" class="material-symbols align-middle mr-2" aria-label="播放此集" @click="$eventBus.$emit('play-item', { libraryItemId, trackId: track.id })">play_arrow</button>{{ showFullPath ? track.metadata.path : track.metadata.filename }}</td>
     <td v-if="!showFullPath" class="hidden lg:table-cell">
       {{ track.audioFile.codec || '' }}
     </td>
@@ -14,7 +14,7 @@
       {{ $bytesPretty(track.metadata.size) }}
     </td>
     <td class="hidden sm:table-cell">
-      {{ $secondsToTimestamp(track.duration) }}
+      {{ track.duration ? $secondsToTimestamp(track.duration) : '待获取' }}
     </td>
     <td v-if="contextMenuItems.length" class="text-center">
       <ui-context-menu-dropdown :items="contextMenuItems" :menu-width="110" @action="contextMenuAction" />
@@ -27,6 +27,7 @@ export default {
   props: {
     libraryItemId: String,
     showFullPath: Boolean,
+    canSelectTrack: Boolean,
     track: {
       type: Object,
       default: () => {}
@@ -50,7 +51,7 @@ export default {
     },
     contextMenuItems() {
       const items = []
-      if (this.userCanDownload) {
+      if (this.userCanDownload && this.track.metadata.ext.toLowerCase() !== '.strm') {
         items.push({
           text: this.$strings.LabelDownload,
           action: 'download'

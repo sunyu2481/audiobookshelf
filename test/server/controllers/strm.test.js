@@ -8,6 +8,8 @@ const PlaybackSessionManager = require('../../../server/managers/PlaybackSession
 const remoteAudio = require('../../../server/utils/remoteAudio')
 const Logger = require('../../../server/Logger')
 const { PlayMethod } = require('../../../server/utils/constants')
+const StrmController = require('../../../server/controllers/StrmController')
+const trackPlayback = require('../../../server/utils/trackPlayback')
 
 describe('STRM 播放入口与能力限制', () => {
   let previousXAccel, previousMetadataPath, file, res
@@ -81,6 +83,24 @@ describe('STRM 播放入口与能力限制', () => {
     await ToolsController.embedAudioFileMetadata(req, res)
     expect(res.status.callCount).to.equal(2)
     expect(res.status.alwaysCalledWith(409)).to.equal(true)
+  })
+
+  it('只有管理员能发起或取消整本后台补全', () => {
+    const start = sinon.stub(trackPlayback, 'startProbeJob')
+    const req = { user: { isAdminOrUp: false }, libraryItem: { mediaType: 'book', media: { includedAudioFiles: [file] } } }
+    StrmController.start(req, res)
+    StrmController.cancel(req, res)
+    StrmController.status(req, res)
+    expect(res.sendStatus.alwaysCalledWith(403)).to.equal(true)
+    expect(start.called).to.equal(false)
+  })
+
+  it('预取只准备会话中紧邻的下一集，忽略请求中指定的其他音轨', async () => {
+    const prepare = sinon.stub(trackPlayback, 'ensureTrack').resolves({})
+    sinon.stub(trackPlayback, 'describe').returns({ tracks: [{ id: '下一集', duration: 30 }] })
+    await StrmController.prepareNext({ body: { trackId: '其他书籍音轨' }, playbackSession: { libraryItemId: '书籍', trackPlayback: { index: 0, tracks: [{ id: '当前集' }, { id: '下一集' }] } } }, res)
+    expect(prepare.calledOnceWithExactly('书籍', '下一集')).to.equal(true)
+    expect(res.json.firstCall.args[0].id).to.equal('下一集')
   })
 
   function sessionInputs() {

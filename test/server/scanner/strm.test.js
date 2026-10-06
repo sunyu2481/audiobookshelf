@@ -93,8 +93,8 @@ describe('STRM 扫描与真实音频探测', function () {
   it('通过重定向探测 M4A 与 MP3，保留本地身份并生成正确的多音轨时间轴', async () => {
     const firstFile = await libraryFile('001.strm')
     const secondFile = await libraryFile('002.strm', 'audio.mp3')
-    const first = await AudioFileScanner.scan('book', firstFile, { title: '书名' })
-    const second = await AudioFileScanner.scan('book', secondFile, { title: '书名' })
+    const first = await AudioFileScanner.scan('book', firstFile, { title: '书名' }, { probeRemote: true })
+    const second = await AudioFileScanner.scan('book', secondFile, { title: '书名' }, { probeRemote: true })
     expect(first.error).to.equal(null)
     expect(first.mimeType).to.equal('audio/mp4')
     expect(first.duration).to.be.closeTo(3, 0.1)
@@ -114,15 +114,25 @@ describe('STRM 扫描与真实音频探测', function () {
     expect(JSON.stringify(ordered)).not.to.contain(sourceUrl)
   })
 
+  it('默认扫描只校验本地引用，不向音频来源发送请求', async () => {
+    const file = await libraryFile('快速扫描.strm')
+    const before = requests.length
+    const result = await AudioFileScanner.scan('book', file, {})
+    expect(result.error).to.equal(null)
+    expect(result.duration).to.equal(null)
+    expect(result.remote.probeStatus).to.equal('pending')
+    expect(requests).to.have.length(before)
+  })
+
   it('探测失败保留待重试音轨，恢复后更新时长和媒体类型', async () => {
     const file = await libraryFile('003.strm')
     const probeStub = sinon.stub(remoteAudio, 'probe').resolves({ error: '来源暂时不可用' })
-    const pending = await AudioFileScanner.scan('book', file, {})
+    const pending = await AudioFileScanner.scan('book', file, {}, { probeRemote: true })
     expect(pending.error).to.equal('来源暂时不可用')
-    expect(pending.duration).to.equal(0)
+    expect(pending.duration).to.equal(null)
     expect(pending.metadata.path).to.equal(file.metadata.path)
     probeStub.restore()
-    const recovered = await AudioFileScanner.scan('book', file, {})
+    const recovered = await AudioFileScanner.scan('book', file, {}, { probeRemote: true })
     const persisted = new AudioFile(JSON.parse(JSON.stringify(pending)))
     expect(persisted.updateFromScan(recovered)).to.equal(true)
     expect(persisted.error).to.equal(null)
@@ -135,7 +145,7 @@ describe('STRM 扫描与真实音频探测', function () {
     const file = new LibraryFile()
     await file.setDataFromPath(Path.join(directory, 'audio.mp3'), 'audio.mp3')
     const spy = sinon.spy(remoteAudio, 'probe')
-    const audioFile = await AudioFileScanner.scan('book', file, {})
+    const audioFile = await AudioFileScanner.scan('book', file, {}, { probeRemote: true })
     expect(audioFile.error).to.equal(null)
     expect(audioFile.mimeType).to.equal('audio/mpeg')
     expect(audioFile.duration).to.be.closeTo(2, 0.1)
@@ -146,11 +156,11 @@ describe('STRM 扫描与真实音频探测', function () {
   it('真实探测失败时保留内网拦截和 HTTP 状态，区别于无效音频', async () => {
     const file = await libraryFile('诊断.strm')
     global.DisableSsrfRequestFilter = undefined
-    const blocked = await AudioFileScanner.scan('book', file, {})
+    const blocked = await AudioFileScanner.scan('book', file, {}, { probeRemote: true })
     expect(blocked.error).to.contain('内网过滤器拦截').and.to.contain('SSRF_REQUEST_FILTER_WHITELIST')
     global.DisableSsrfRequestFilter = () => true
     await fs.writeFile(file.metadata.path, `${sourceUrl}/forbidden?secret=token`)
-    const forbidden = await AudioFileScanner.scan('book', file, {})
+    const forbidden = await AudioFileScanner.scan('book', file, {}, { probeRemote: true })
     expect(forbidden.error).to.contain('HTTP 403').and.not.to.contain('secret').and.not.to.contain('隐藏的')
     await fs.writeFile(file.metadata.path, `${sourceUrl}/invalid`)
     expect((await remoteAudio.probe(file.metadata.path)).error).to.contain('FFprobe 无法识别')

@@ -16,7 +16,7 @@ const BookFinder = require('../finders/BookFinder')
 const fsExtra = require('../libs/fsExtra')
 const EBookFile = require('../objects/files/EBookFile')
 const AudioFile = require('../objects/files/AudioFile')
-const { isStrmFile } = require('../utils/audioSource')
+const { isStrmFile, hasCompleteTimeline } = require('../utils/audioSource')
 const LibraryFile = require('../objects/files/LibraryFile')
 
 const RssFeedManager = require('../managers/RssFeedManager')
@@ -61,6 +61,10 @@ class BookScanner {
    * @returns {Promise<{libraryItem:import('../models/LibraryItem'), wasUpdated:boolean}>}
    */
   async rescanExistingBookLibraryItem(existingLibraryItem, libraryItemData, librarySettings, libraryScan) {
+    return require('../utils/bookAudioLock')(existingLibraryItem.id, () => this.rescanBookAudio(existingLibraryItem, libraryItemData, librarySettings, libraryScan))
+  }
+
+  async rescanBookAudio(existingLibraryItem, libraryItemData, librarySettings, libraryScan) {
     /** @type {import('../models/Book')} */
     const media = await existingLibraryItem.getMedia({
       include: [
@@ -84,7 +88,7 @@ class BookScanner {
     })
 
     for (const audioFile of media.audioFiles) {
-      if (!isStrmFile(audioFile) || (!audioFile.error && !libraryItemData.forceRemoteProbe)) continue
+      if (!isStrmFile(audioFile) || !libraryItemData.forceRemoteProbe) continue
       const libraryFile = libraryItemData.audioLibraryFiles.find((lf) => lf.metadata.path === audioFile.metadata.path || lf.ino === audioFile.ino)
       if (libraryFile && !libraryItemData.audioLibraryFilesModified.some((lf) => lf.new.metadata.path === libraryFile.metadata.path)) {
         libraryItemData.libraryFilesModified.push({ old: libraryFile, new: libraryFile })
@@ -111,6 +115,12 @@ class BookScanner {
 
           if (matchedScannedAudioFile) {
             scannedAudioFiles = scannedAudioFiles.filter((saf) => saf !== matchedScannedAudioFile)
+            if (matchedScannedAudioFile.remote?.probeStatus === 'pending') {
+              const sameSource = audioFileObj.remote?.sourceHash ? audioFileObj.remote.sourceHash === matchedScannedAudioFile.remote.sourceHash : audioFileObj.metadata.mtimeMs === matchedScannedAudioFile.metadata.mtimeMs && audioFileObj.metadata.size === matchedScannedAudioFile.metadata.size
+              if (sameSource && audioFileObj.duration > 0) {
+                return { ...audioFileObj, ino: matchedScannedAudioFile.ino, metadata: matchedScannedAudioFile.metadata.toJSON(), remote: { ...audioFileObj.remote, sourceHash: matchedScannedAudioFile.remote.sourceHash } }
+              }
+            }
             if (matchedScannedAudioFile.remote && matchedScannedAudioFile.error && audioFileObj.duration > 0) {
               return { ...audioFileObj, ino: matchedScannedAudioFile.ino, metadata: matchedScannedAudioFile.metadata.toJSON(), error: matchedScannedAudioFile.error }
             }
@@ -154,6 +164,10 @@ class BookScanner {
           media.duration += af.duration
         }
       })
+      if (media.audioFiles.some(isStrmFile) && !hasCompleteTimeline(media.audioFiles.filter((file) => !file.exclude))) {
+        media.duration = null
+        media.chapters = []
+      }
 
       media.changed('audioFiles', true)
     }
@@ -352,6 +366,12 @@ class BookScanner {
       }
     }
 
+    if (media.audioFiles.some(isStrmFile) && !hasCompleteTimeline(media.includedAudioFiles)) {
+      if (media.duration !== null || media.chapters?.length) hasMediaChanges = true
+      media.duration = null
+      media.chapters = []
+    }
+
     // Load authors/series again if updated (for sending back to client)
     if (authorsUpdated) {
       media.authors = await media.getAuthors({
@@ -483,6 +503,10 @@ class BookScanner {
 
     let duration = 0
     scannedAudioFiles.forEach((af) => (duration += !isNaN(af.duration) ? Number(af.duration) : 0))
+    if (scannedAudioFiles.some(isStrmFile) && !hasCompleteTimeline(scannedAudioFiles.filter((file) => !file.exclude))) {
+      duration = null
+      bookMetadata.chapters = []
+    }
     const bookObject = {
       ...bookMetadata,
       audioFiles: scannedAudioFiles,

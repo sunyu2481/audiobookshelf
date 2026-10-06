@@ -19,6 +19,7 @@ class PlaybackSession {
     this.displayAuthor = null
     this.coverPath = null
     this.duration = null
+    this.trackPlayback = null
 
     this.playMethod = null
     this.mediaPlayer = null
@@ -64,6 +65,7 @@ class PlaybackSession {
       displayAuthor: this.displayAuthor,
       coverPath: this.coverPath,
       duration: this.duration,
+      ...(this.trackPlayback ? { trackPlayback: this.trackPlayback } : {}),
       playMethod: this.playMethod,
       mediaPlayer: this.mediaPlayer,
       deviceInfo: this.deviceInfo?.toJSON() || null,
@@ -110,6 +112,7 @@ class PlaybackSession {
       startedAt: this.startedAt,
       updatedAt: this.updatedAt,
       audioTracks: this.audioTracks.map((at) => at.toJSON?.() || { ...at }),
+      ...(this.trackPlayback ? { trackPlayback: this.trackPlayback } : {}),
       libraryItem: libraryItem?.toOldJSONExpanded() || null,
       coverAspectRatio: this.coverAspectRatio !== null ? this.coverAspectRatio : undefined // Used for share sessions
     }
@@ -124,6 +127,7 @@ class PlaybackSession {
     this.episodeId = session.episodeId
     this.mediaType = session.mediaType
     this.duration = session.duration
+    this.trackPlayback = session.trackPlayback || null
     this.playMethod = session.playMethod
     this.mediaPlayer = session.mediaPlayer || null
 

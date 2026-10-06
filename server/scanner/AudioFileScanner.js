@@ -156,19 +156,32 @@ class AudioFileScanner {
    * @param {{title:string, subtitle:string, series:string, sequence:string, publishedYear:string, narrators:string}} mediaMetadataFromScan
    * @returns {Promise<AudioFile>}
    */
-  async scan(mediaType, libraryFile, mediaMetadataFromScan) {
+  async scan(mediaType, libraryFile, mediaMetadataFromScan, options = {}) {
     const remote = isStrmFile(libraryFile)
-    let probeData = remote ? await remoteAudio.probe(libraryFile.metadata.path) : await prober.probe(libraryFile.metadata.path)
+    let sourceHash
+    let probeData
+    if (remote) {
+      try {
+        const url = await remoteAudio.readStrm(libraryFile.metadata.path)
+        sourceHash = require('crypto').createHash('sha256').update(url).digest('hex')
+        probeData = options.probeRemote ? await remoteAudio.probe(libraryFile.metadata.path) : { duration: null, audioMetaTags: new AudioMetaTags(), remote: { mimeType: null, size: null, probeStatus: 'pending' } }
+        if (probeData.remote) probeData.remote = { ...probeData.remote, sourceHash, probeStatus: options.probeRemote ? 'ready' : 'pending' }
+      } catch (error) {
+        probeData = { error: error.status ? error.message : '无法读取 STRM 文件，请检查文件权限及挂载路径' }
+      }
+    } else {
+      probeData = await prober.probe(libraryFile.metadata.path)
+    }
     const remoteError = remote && probeData.error
 
     if (probeData.error) {
       Logger.error(`[AudioFileScanner] ${probeData.error} : "${libraryFile.metadata.path}"`)
       if (!remote) return null
       // 保留待重试音轨，使网络故障不会导致书籍或章节被静默丢弃。
-      probeData = { duration: 0, audioMetaTags: new AudioMetaTags(), remote: { mimeType: null, size: null } }
+      probeData = { duration: null, audioMetaTags: new AudioMetaTags(), remote: { mimeType: null, size: null, sourceHash, probeStatus: 'failed' } }
     }
 
-    if (!probeData.audioStream && !remoteError) {
+    if (!probeData.audioStream && !remoteError && !(remote && !options.probeRemote)) {
       Logger.error('[AudioFileScanner] Invalid audio file no audio stream')
       return null
     }
@@ -200,7 +213,7 @@ class AudioFileScanner {
     for (let batch = 0; batch < audioLibraryFiles.length; batch += batchSize) {
       const proms = []
       for (let i = batch; i < Math.min(batch + batchSize, audioLibraryFiles.length); i++) {
-        proms.push(this.scan(mediaType, audioLibraryFiles[i], libraryItemScanData.mediaMetadata))
+        proms.push(this.scan(mediaType, audioLibraryFiles[i], libraryItemScanData.mediaMetadata, { probeRemote: libraryItemScanData.forceRemoteProbe === true }))
       }
       results.push(...(await Promise.all(proms).then((scanResults) => scanResults.filter((sr) => sr))))
     }
@@ -502,6 +515,7 @@ class AudioFileScanner {
    * @returns {import('../models/Book').ChapterObject[]}
    */
   getBookChaptersFromAudioFiles(bookTitle, audioFiles, libraryScan) {
+    if (audioFiles.some(isStrmFile) && !require('../utils/audioSource').hasCompleteTimeline(audioFiles.filter((file) => !file.exclude))) return []
     // If overdrive media markers are present then use those instead
     const overdriveChapters = parseOverdriveMediaMarkersAsChapters(audioFiles)
     if (overdriveChapters?.length) {
