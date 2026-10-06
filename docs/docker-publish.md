@@ -1,5 +1,7 @@
 # 自动发布个人 Docker 镜像
 
+[![镜像构建状态](https://github.com/sunyu2481/audiobookshelf/actions/workflows/docker-build.yml/badge.svg?branch=master)](https://github.com/sunyu2481/audiobookshelf/actions/workflows/docker-build.yml)
+
 本仓库的 `.github/workflows/docker-build.yml` 使用 GitHub Actions 自动检查代码、构建镜像并推送到 GitHub 镜像仓库。镜像名称由 GitHub 仓库名自动生成：
 
 ```text
