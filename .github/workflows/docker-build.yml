@@ -1,84 +1,104 @@
----
-name: Build and Push Docker Image
+name: 构建并发布 Docker 镜像
 
 on:
-  # Allows you to run workflow manually from Actions tab
   workflow_dispatch:
     inputs:
       tags:
-        description: 'Docker Tag'
-        required: true
-        default: 'latest'
+        description: '额外镜像标签（可选，例如 test-strm）'
+        required: false
+        type: string
   push:
     branches: [main, master]
     tags:
       - 'v*.*.*'
-    # Only build when files in these directories have been changed
-    paths:
-      - client/**
-      - server/**
-      - index.js
-      - package.json
-      - tsconfig.server.json
-      - Dockerfile
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
-    if: ${{ !contains(github.event.head_commit.message, 'skip ci') && github.repository == 'advplyr/audiobookshelf' }}
+  verify:
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, 'skip ci')
     runs-on: ubuntu-24.04
-
     steps:
-      - name: Check out
+      - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: Docker meta
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: 安装音频测试工具
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: 安装依赖并检查
+        run: |
+          npm ci
+          npm run lint
+          npm test
+
+  build:
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 确定镜像名称并检查手动标签
+        id: image
+        env:
+          MANUAL_TAG: ${{ inputs.tags }}
+        run: |
+          if [[ -n "$MANUAL_TAG" && ! "$MANUAL_TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
+            echo '::error::镜像标签格式无效，请填写单个标签，不要填写镜像地址。'
+            exit 1
+          fi
+          echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: 生成镜像标签
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: advplyr/audiobookshelf,ghcr.io/${{ github.repository_owner }}/audiobookshelf
+          images: ${{ steps.image.outputs.name }}
+          flavor: latest=false
           tags: |
-            type=edge,branch=master
+            type=ref,event=branch
+            type=ref,event=tag
             type=semver,pattern={{version}}
+            type=sha,format=long
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+            type=raw,value=${{ inputs.tags }},enable=${{ github.event_name == 'workflow_dispatch' && inputs.tags != '' }}
 
-      - name: Setup QEMU
+      - name: 配置跨架构构建
         uses: docker/setup-qemu-action@v3
 
-      - name: Set up Docker Buildx
+      - name: 配置 Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Cache Docker layers
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
-
-      - name: Login to Dockerhub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
-
-      - name: Login to ghcr
+      - name: 登录 GitHub 镜像仓库
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GHCR_PASSWORD }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build image
+      - name: 构建并推送双架构镜像
         uses: docker/build-push-action@v6
         with:
-          tags: ${{ github.event.inputs.tags || steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
-
-      - name: Move cache
-        run: |
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=audiobookshelf
+          cache-to: type=gha,scope=audiobookshelf,mode=max

@@ -2,11 +2,11 @@ ARG NUSQLITE3_DIR="/usr/local/lib/nusqlite3"
 ARG NUSQLITE3_PATH="${NUSQLITE3_DIR}/libnusqlite3.so"
 
 ### STAGE 0: Build client ###
-FROM node:24-alpine AS build-client
+FROM --platform=$BUILDPLATFORM node:24-alpine AS build-client
 
 WORKDIR /client
 COPY /client /client
-RUN npm ci && npm cache clean --force
+RUN CYPRESS_INSTALL_BINARY=0 npm ci && npm cache clean --force
 RUN npm run generate
 
 ### STAGE 1: Compile server on the builder CPU (avoid QEMU SIGILL from tsc on arm64) ###
