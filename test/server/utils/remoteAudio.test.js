@@ -42,7 +42,9 @@ describe('远程音频代理', () => {
       if (req.path === '/blocked') return res.redirect(`http://localhost:${source.address().port}/audio.m4a`)
       if (req.path === '/loop') return res.redirect('/loop')
       if (req.path === '/forbidden') return res.status(403).send('不能泄漏的上游错误和签名')
+      if (req.path === '/missing') return res.status(404).send('不能泄漏的上游路径')
       if (req.path === '/html') return res.send('<html>登录页面</html>')
+      if (req.path === '/compressed') return res.set('Content-Encoding', 'gzip').end(audio)
       res.setHeader('Content-Type', 'audio/mp4')
       res.setHeader('Accept-Ranges', 'bytes')
       res.setHeader('ETag', '"v1"')
@@ -208,5 +210,72 @@ describe('远程音频代理', () => {
     } catch (error) {
       expect(['ECONNREFUSED', 'ECONNRESET']).to.include(error.code)
     }
+  })
+
+  it('探测保留来源错误及跳转后的主机，不泄漏来源路径、签名和响应正文', async () => {
+    const probeStub = sinon.stub(prober, 'probe').callsFake(async (url) => {
+      await request(url)
+      return { error: 'HTTP 错误，附带不应输出的签名 sign=secret' }
+    })
+    sinon.stub(prober, 'rawProbe').callsFake((url) => probeStub(url))
+    for (const raw of [false, true]) {
+      for (const [path, message, host] of [
+        ['/blocked', '内网过滤器拦截', 'localhost'],
+        ['/forbidden', 'HTTP 403', sourceUrl],
+        ['/missing', 'HTTP 404', sourceUrl],
+        ['/html', '网页、文本、JSON', sourceUrl],
+        ['/compressed', '压缩响应', sourceUrl]
+      ]) {
+        await fs.writeFile(strmPath, `${sourceUrl}${path}?sign=secret`)
+        const result = await remoteAudio.probe(strmPath, raw)
+        expect(result.error).to.contain(message).and.to.contain(host)
+        expect(result.error).not.to.contain('sign=').and.not.to.contain('不能泄漏').and.not.to.contain('<html>').and.not.to.contain(path)
+      }
+    }
+  })
+
+  it('未配置白名单时提示应放行的主机及配置格式', async () => {
+    global.DisableSsrfRequestFilter = undefined
+    sinon.stub(prober, 'probe').callsFake(async (url) => {
+      await request(url)
+      return { error: 'HTTP 错误' }
+    })
+    const result = await remoteAudio.probe(strmPath)
+    expect(result.error).to.contain('127.0.0.1').and.to.contain('SSRF_REQUEST_FILTER_WHITELIST').and.to.contain('不含协议、端口和路径')
+    expect(upstreamRequests).to.have.length(0)
+  })
+
+  it('连接拒绝与 DNS 失败保留安全的错误代码，不输出原始异常', async () => {
+    for (const code of ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'ERR_TLS_CERT_ALTNAME_INVALID']) {
+      const stub = sinon.stub(http, 'request').throws(Object.assign(new Error('签名地址 http://example.com/private?secret=token'), { code }))
+      try {
+        await remoteAudio.openRemote(`${sourceUrl}/private?secret=token`)
+        expect.fail('请求应失败')
+      } catch (error) {
+        expect(error.message).to.contain(code).and.to.contain(sourceUrl)
+        expect(error.message).not.to.contain('private').and.not.to.contain('secret').and.not.to.contain('token')
+      } finally {
+        stub.restore()
+      }
+    }
+  })
+
+  it('区分探测超时、缺少程序和无法识别的音频，隐藏探测器原始异常', async () => {
+    const stub = sinon.stub(prober, 'probe')
+    for (const [error, message] of [
+      [{ code: 'FFPROBE_TIMEOUT' }, '探测超时'],
+      [{ code: 'FFPROBE_OUTPUT_LIMIT' }, '探测结果过大'],
+      [{ code: 'ENOENT' }, '无法启动 FFprobe'],
+      ['无法识别 http://example.com/audio?secret=token', 'FFprobe 无法识别']
+    ]) {
+      stub.resolves({ error })
+      const result = await remoteAudio.probe(strmPath)
+      expect(result.error).to.contain(message).and.not.to.contain('secret').and.not.to.contain('example.com')
+    }
+  })
+
+  it('STRM 文件不存在时提示挂载路径，区别于缺少探测程序', async () => {
+    await fs.unlink(strmPath)
+    expect((await remoteAudio.probe(strmPath)).error).to.contain('STRM 文件不存在')
   })
 })

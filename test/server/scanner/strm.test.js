@@ -13,6 +13,7 @@ const AudioFile = require('../../../server/objects/files/AudioFile')
 const Book = require('../../../server/models/Book')
 const Logger = require('../../../server/Logger')
 const remoteAudio = require('../../../server/utils/remoteAudio')
+const ffprobeProcess = require('../../../server/libs/nodeFfprobe')
 const scanUtils = require('../../../server/utils/scandir')
 
 describe('STRM 扫描与真实音频探测', function () {
@@ -32,6 +33,14 @@ describe('STRM 扫描与真实音频探测', function () {
     const app = express()
     app.use((req, res, next) => { requests.push(req.headers); next() })
     app.get('/d/:filename', (req, res) => res.redirect(`/media/${req.params.filename}?temporary=signature`))
+    app.get('/forbidden', (req, res) => res.status(403).send('隐藏的上游错误正文'))
+    app.get('/invalid', (req, res) => res.type('audio/mp4').send('这不是音频文件'))
+    app.get('/truncated', (req, res) => {
+      res.writeHead(200, { 'Content-Type': 'audio/mp4', 'Content-Length': 100000 })
+      res.write('来源只发送了部分数据')
+      setTimeout(() => res.destroy(), 20)
+    })
+    app.get('/hang', () => {})
     app.get('/media/:filename', (req, res) => res.sendFile(Path.join(directory, req.params.filename)))
     server = http.createServer(app)
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -132,5 +141,29 @@ describe('STRM 扫描与真实音频探测', function () {
     expect(audioFile.duration).to.be.closeTo(2, 0.1)
     expect(audioFile.toJSON()).not.to.have.property('remote')
     expect(spy.called).to.equal(false)
+  })
+
+  it('真实探测失败时保留内网拦截和 HTTP 状态，区别于无效音频', async () => {
+    const file = await libraryFile('诊断.strm')
+    global.DisableSsrfRequestFilter = undefined
+    const blocked = await AudioFileScanner.scan('book', file, {})
+    expect(blocked.error).to.contain('内网过滤器拦截').and.to.contain('SSRF_REQUEST_FILTER_WHITELIST')
+    global.DisableSsrfRequestFilter = () => true
+    await fs.writeFile(file.metadata.path, `${sourceUrl}/forbidden?secret=token`)
+    const forbidden = await AudioFileScanner.scan('book', file, {})
+    expect(forbidden.error).to.contain('HTTP 403').and.not.to.contain('secret').and.not.to.contain('隐藏的')
+    await fs.writeFile(file.metadata.path, `${sourceUrl}/invalid`)
+    expect((await remoteAudio.probe(file.metadata.path)).error).to.contain('FFprobe 无法识别')
+    await fs.writeFile(file.metadata.path, `${sourceUrl}/truncated`)
+    expect((await remoteAudio.probe(file.metadata.path)).error).to.contain('ECONNRESET')
+  })
+
+  it('探测进程超时携带可识别的错误代码', async () => {
+    try {
+      await ffprobeProcess(`${sourceUrl}/hang`, { timeout: 100 })
+      expect.fail('探测应超时')
+    } catch (error) {
+      expect(error.code).to.equal('FFPROBE_TIMEOUT')
+    }
   })
 })

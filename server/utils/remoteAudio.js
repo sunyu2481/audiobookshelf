@@ -1,6 +1,7 @@
 const fs = require('fs/promises')
 const http = require('http')
 const https = require('https')
+const { isIP } = require('net')
 const { randomUUID } = require('crypto')
 const { pipeline } = require('stream/promises')
 const ssrfFilter = require('ssrf-req-filter')
@@ -16,6 +17,37 @@ let activeProbes = 0
 
 function sourceError(message, status = 502) {
   return Object.assign(new Error(message), { status })
+}
+
+function requestError(error, url) {
+  const blockedAddress = /^Call to (.+) is blocked\.$/.exec(error.message || '')?.[1]
+  if (blockedAddress && isIP(blockedAddress)) {
+    return sourceError(`远程音频请求被内网过滤器拦截（${url.origin}），请将 ${url.hostname} 加入 SSRF_REQUEST_FILTER_WHITELIST，只填写主机或 IP，不含协议、端口和路径`)
+  }
+  if (error.status) return sourceError(`${error.message}（${url.origin}）`, error.status)
+  const reasons = {
+    ENOTFOUND: '无法解析来源主机',
+    EAI_AGAIN: '来源主机的 DNS 解析暂时失败',
+    ECONNREFUSED: '来源拒绝连接，请检查地址、端口及服务是否启动',
+    EHOSTUNREACH: '无法到达来源主机，请检查容器网络和路由',
+    ENETUNREACH: '无法到达来源网络，请检查容器网络和路由',
+    ETIMEDOUT: '连接来源超时',
+    ECONNRESET: '来源连接被重置',
+    ERR_STREAM_PREMATURE_CLOSE: '来源在音频传输完成前关闭连接',
+    CERT_HAS_EXPIRED: '来源 HTTPS 证书已过期',
+    DEPTH_ZERO_SELF_SIGNED_CERT: '来源 HTTPS 证书不受信任',
+    UNABLE_TO_VERIFY_LEAF_SIGNATURE: '无法验证来源 HTTPS 证书',
+    ERR_TLS_CERT_ALTNAME_INVALID: '来源 HTTPS 证书与主机名不匹配'
+  }
+  const reason = reasons[error.code]
+  return sourceError(`远程音频请求失败（${url.origin}）：${reason ? `${reason}（${error.code}）` : '连接或传输异常，请检查容器到来源的网络'}`, error.code === 'ETIMEDOUT' ? 504 : 502)
+}
+
+function probeError(error) {
+  if (error?.code === 'FFPROBE_TIMEOUT') return sourceError('远程音频探测超时（60 秒），请检查来源速度及范围读取支持', 504)
+  if (error?.code === 'FFPROBE_OUTPUT_LIMIT') return sourceError('远程音频探测结果过大，超出读取限制')
+  if (error?.code === 'ENOENT') return sourceError('无法启动 FFprobe，请检查安装及 FFPROBE_PATH 配置')
+  return sourceError('FFprobe 无法识别远程音频，请检查来源是否返回完整音频及受支持的音频格式')
 }
 
 function validateUrl(value) {
@@ -90,9 +122,12 @@ async function openRemote(urlString, { method = 'GET', headers = {}, signal, tim
         agent.destroy()
         reject(error)
       }
-    })
+    }).catch((error) => { throw requestError(error, url) })
 
-    if (![301, 302, 303, 307, 308].includes(response.statusCode)) return response
+    if (![301, 302, 303, 307, 308].includes(response.statusCode)) {
+      response.remoteAudioOrigin = url.origin
+      return response
+    }
     response.destroy()
     if (redirects === MAX_REDIRECTS || !response.headers.location) throw sourceError('远程音频重定向次数过多或缺少目标地址')
     url = validateUrl(new URL(response.headers.location, url).href)
@@ -123,9 +158,18 @@ async function proxyUrl(req, res, url, mimeType = null) {
       return
     }
     const contentType = upstream.headers['content-type'] || ''
-    if (![200, 206].includes(status) || /(?:text\/|json|mpegurl|dash\+xml)/i.test(contentType) || (upstream.headers['content-encoding'] && upstream.headers['content-encoding'] !== 'identity')) {
+    if (![200, 206].includes(status)) {
       upstream.destroy()
-      throw sourceError([401, 403].includes(status) ? 'OpenList 或网盘拒绝访问音频，请检查来源授权' : '音频来源未返回可播放的音频文件')
+      const reason = [401, 403].includes(status) ? 'OpenList 或网盘拒绝访问音频，请检查来源授权、下载代理及 STRM_USER_AGENT' : '音频来源请求失败，请检查文件是否存在及 OpenList 状态'
+      throw sourceError(`${reason}（HTTP ${status}，${upstream.remoteAudioOrigin}）`)
+    }
+    if (/(?:text\/|json|mpegurl|dash\+xml)/i.test(contentType)) {
+      upstream.destroy()
+      throw sourceError(`音频来源返回了网页、文本、JSON 或播放列表，请检查是否为直接下载地址（${upstream.remoteAudioOrigin}）`)
+    }
+    if (upstream.headers['content-encoding'] && upstream.headers['content-encoding'] !== 'identity') {
+      upstream.destroy()
+      throw sourceError(`音频来源返回了压缩响应，无法保证范围读取正确，请检查下载代理配置（${upstream.remoteAudioOrigin}）`)
     }
     for (const name of ['content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified']) {
       if (upstream.headers[name]) res.setHeader(name, upstream.headers[name])
@@ -136,7 +180,19 @@ async function proxyUrl(req, res, url, mimeType = null) {
       upstream.destroy()
       res.end()
     } else {
-      await pipeline(upstream, res)
+      let transferError
+      const rememberError = (error) => {
+        // 在管道关闭客户端之前记录来源故障，区别于探测器主动停止读取。
+        if (!controller.signal.aborted) transferError = requestError(error, new URL(upstream.remoteAudioOrigin))
+      }
+      upstream.on('error', rememberError)
+      try {
+        await pipeline(upstream, res)
+      } catch (error) {
+        throw transferError || error
+      } finally {
+        upstream.removeListener('error', rememberError)
+      }
     }
   } finally {
     controller.abort()
@@ -182,13 +238,18 @@ async function probe(path, raw = false) {
   try {
     const url = await readStrm(path)
     const route = `/${randomUUID()}`
+    let proxyError
     server = http.createServer((req, res) => {
       if (req.url !== route) {
         res.writeHead(404)
         res.end()
         return
       }
-      proxyUrl(req, res, url).catch((error) => sendError(res, error))
+      proxyUrl(req, res, url).catch((error) => {
+        // 保留已脱敏的来源错误，避免被探测器的通用 HTTP 错误覆盖。
+        if (error.status && !proxyError) proxyError = error
+        sendError(res, error)
+      })
     })
     await new Promise((resolve, reject) => {
       server.once('error', reject)
@@ -201,7 +262,7 @@ async function probe(path, raw = false) {
     }
     const probeUrl = `http://127.0.0.1:${server.address().port}${route}`
     const result = raw ? await prober.rawProbe(probeUrl, options) : await prober.probe(probeUrl, false, options)
-    if (result.error) throw sourceError('远程音频探测失败，请检查来源地址、网络、内网白名单及音频格式')
+    if (result.error) throw proxyError || probeError(result.error)
     if (!raw) {
       if (!result.audioStream || !Number.isFinite(result.duration) || result.duration <= 0) throw sourceError('远程音频没有有效的音轨或时长')
       result.remote = { mimeType: getMimeType(result.formatName), size: result.size }
@@ -209,7 +270,8 @@ async function probe(path, raw = false) {
     }
     return result
   } catch (error) {
-    return { error: error.status ? error.message : '远程音频探测失败，请检查来源地址、网络及内网白名单' }
+    const fileErrors = { ENOENT: 'STRM 文件不存在，请检查挂载路径', EACCES: '无法读取 STRM 文件，请检查文件权限', EPERM: '无法读取 STRM 文件，请检查文件权限' }
+    return { error: error.status ? error.message : fileErrors[error.code] || '无法准备远程音频探测，请检查 STRM 文件及本地探测服务' }
   } finally {
     if (server) {
       server.closeAllConnections()

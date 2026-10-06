@@ -15,7 +15,7 @@ module.exports = (function () {
       const timer = options.timeout
         ? setTimeout(() => {
             proc.kill('SIGKILL')
-            reject(new Error('音频探测超时'))
+            reject(Object.assign(new Error('音频探测超时'), { code: 'FFPROBE_TIMEOUT' }))
           }, options.timeout)
         : null
 
@@ -26,7 +26,7 @@ module.exports = (function () {
         outputBytes += Buffer.byteLength(data)
         if (options.timeout && outputBytes > 8 * 1024 * 1024) {
           proc.kill('SIGKILL')
-          reject(new Error('音频探测结果过大'))
+          reject(Object.assign(new Error('音频探测结果过大'), { code: 'FFPROBE_OUTPUT_LIMIT' }))
           return
         }
         probeData.push(data)
